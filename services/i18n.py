@@ -1,0 +1,66 @@
+"""Small translation table (English + Hindi). Unknown keys fall back to English."""
+
+STRINGS = {
+    "en": {
+        "searching": "🔎 Searching…",
+        "not_found": "❌ No results found.",
+        "usage_play": "Usage: <code>/play song name or link</code> — or reply to an audio/video file.",
+        "now_playing": "Now playing",
+        "queued": "Queued at #{pos}",
+        "queue_full": "⚠️ The queue is full.",
+        "requested_by": "Requested by",
+        "admins_only": "🚫 Only admins (or authorized users) can do this.",
+        "play_restricted": "🚫 Playing is restricted to admins in this group.",
+        "nothing_playing": "Nothing is playing.",
+        "paused": "⏸ Paused.",
+        "resumed": "▶️ Resumed.",
+        "stopped": "⏹ Stopped and cleared the queue.",
+        "skipped_end": "⏹ Queue finished.",
+        "muted": "🔇 Muted.",
+        "unmuted": "🔊 Unmuted.",
+        "queue_finished": "⏹ Queue finished — left the voice chat.",
+        "auto_paused": "⏸ Nobody is in the voice chat, so I paused. I'll resume when someone joins.",
+        "auto_resumed": "▶️ Someone joined — resuming.",
+        "idle_stopped": "👋 The voice chat has been empty for a while, so I stopped and left to save resources.",
+        "no_vc": "❌ No active voice chat. Start one in this group and try again.",
+        "play_failed": "❌ Couldn't play that track. Try another source or search term.",
+        "lang_set": "Language updated.",
+        "group_only": "This command works in groups.",
+        "settings_title": "⚙️ <b>Group settings</b>",
+        "reply_to_user": "Reply to a user's message or give a user id/@username.",
+    },
+    "hi": {
+        "searching": "🔎 खोज रहा हूँ…",
+        "not_found": "❌ कोई नतीजा नहीं मिला।",
+        "usage_play": "उपयोग: <code>/play गाने का नाम या लिंक</code> — या किसी ऑडियो/वीडियो फ़ाइल को रिप्लाई करें।",
+        "now_playing": "अभी बज रहा है",
+        "queued": "कतार में #{pos}",
+        "queue_full": "⚠️ कतार भरी हुई है।",
+        "requested_by": "अनुरोध",
+        "admins_only": "🚫 यह सिर्फ़ एडमिन (या अधिकृत यूज़र) कर सकते हैं।",
+        "play_restricted": "🚫 इस ग्रुप में गाना चलाना सिर्फ़ एडमिन के लिए है।",
+        "nothing_playing": "कुछ भी नहीं बज रहा।",
+        "paused": "⏸ रोका गया।",
+        "resumed": "▶️ फिर शुरू।",
+        "stopped": "⏹ बंद किया और कतार साफ़ की।",
+        "skipped_end": "⏹ कतार खत्म।",
+        "muted": "🔇 म्यूट।",
+        "unmuted": "🔊 अनम्यूट।",
+        "queue_finished": "⏹ कतार खत्म — वॉइस चैट छोड़ दी।",
+        "auto_paused": "⏸ वॉइस चैट में कोई नहीं है, इसलिए रोक दिया। कोई आते ही फिर चलेगा।",
+        "auto_resumed": "▶️ कोई जुड़ा — फिर चल रहा है।",
+        "idle_stopped": "👋 वॉइस चैट काफ़ी देर से खाली थी, इसलिए संसाधन बचाने के लिए बंद कर दिया।",
+        "no_vc": "❌ कोई वॉइस चैट चालू नहीं है। ग्रुप में शुरू करके फिर कोशिश करें।",
+        "play_failed": "❌ यह ट्रैक नहीं चल सका। कोई और नाम या सोर्स आज़माएँ।",
+        "lang_set": "भाषा बदल दी गई।",
+        "group_only": "यह कमांड ग्रुप में चलता है।",
+        "settings_title": "⚙️ <b>ग्रुप सेटिंग्स</b>",
+        "reply_to_user": "किसी यूज़र के मैसेज को रिप्लाई करें या यूज़र id/@username दें।",
+    },
+}
+LANG_NAMES = {"en": "English", "hi": "हिन्दी"}
+
+
+def t(lang: str, key: str, **kw) -> str:
+    text = STRINGS.get(lang, STRINGS["en"]).get(key) or STRINGS["en"].get(key, key)
+    return text.format(**kw) if kw else text
