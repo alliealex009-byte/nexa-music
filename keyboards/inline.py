@@ -3,21 +3,29 @@ from services import helptext
 from services.ui import b
 
 
-def main_menu(bot_username: str = ""):
-    rows = [
+def main_menu(bot_username: str = "", is_owner: bool = False):
+    rows = []
+    if bot_username:
+        rows.append([b("✦ ADD ME TO YOUR GROUP ✦", url=f"https://t.me/{bot_username}?startgroup=true&admin=delete_messages+invite_users+manage_video_chats",
+                       style="primary", emoji="add")])
+    rows += [
         [b("🎵 Play Music", "menu:play", style="success", emoji="play"),
          b("🔎 Search", "menu:search", style="primary", emoji="search")],
         [b("📋 Queue", "menu:queue", style="primary", emoji="queue"),
-         b("🎧 Playlists", "menu:playlists", style="primary", emoji="playlist")],
-        [b("⚙️ Settings", "menu:settings", emoji="settings"),
+         b("🎧 Playlists", "menu:playlists", style="success", emoji="playlist")],
+        [b("⚙️ Settings", "menu:settings", style="primary", emoji="settings"),
          b("💎 Premium", "menu:premium", style="success", emoji="premium")],
-        [b("💬 Support", url=f"https://t.me/{config.SUPPORT_GROUP}", emoji="support"),
-         b("📢 Updates", url=f"https://t.me/{config.UPDATES_CHANNEL}", emoji="updates")],
-        [b("📚 Help", "help:home", emoji="help")],
     ]
-    if bot_username:
-        rows[-1].append(b("➕ Add to group", url=f"https://t.me/{bot_username}?startgroup=true", style="primary",
-                          emoji="add"))
+    links = []
+    if config.SUPPORT_GROUP:
+        links.append(b("💬 Support", url=f"https://t.me/{config.SUPPORT_GROUP}", style="success", emoji="support"))
+    if config.UPDATES_CHANNEL:
+        links.append(b("📢 Updates", url=f"https://t.me/{config.UPDATES_CHANNEL}", style="primary", emoji="updates"))
+    if links:
+        rows.append(links)
+    rows.append([b("📚 Help & Commands", "help:home", style="success", emoji="help")])
+    if is_owner:
+        rows.append([b("🛠 Owner Panel", "own:home", style="danger", emoji="admin")])
     return rows
 
 
