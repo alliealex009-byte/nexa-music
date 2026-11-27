@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS cookies (
     content TEXT NOT NULL,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS helper_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session TEXT NOT NULL UNIQUE,
+    added_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS auth_users (
     chat_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -80,6 +85,8 @@ GROUP_COLUMNS = {
     "language": "TEXT DEFAULT 'en'",
     "autoplay": "INTEGER DEFAULT 0",
     "idle_stop": "INTEGER DEFAULT 1",
+    "lyrics": "INTEGER DEFAULT 0",
+    "karaoke": "INTEGER DEFAULT 0",
 }
 
 
