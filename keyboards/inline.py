@@ -69,17 +69,25 @@ def help_page(page: str):
     return rows
 
 
-def player_controls(more: bool = False, loop: str = "off", muted: bool = False, autoplay: bool = False):
+def player_controls(more: bool = False, loop: str = "off", muted: bool = False, autoplay: bool = False,
+                    paused: bool = False, lyrics: bool = False):
     if not more:
-        return [
-            [b("⏸ Pause", "ctl:pause", style="primary", emoji="pause"), b("▶️ Resume", "ctl:resume", style="success", emoji="resume")],
+        middle = (b("▶️ Resume", "ctl:resume", style="success", emoji="resume") if paused
+                  else b("⏸ Pause", "ctl:pause", style="primary", emoji="pause"))
+        rows = [
+            [b("⏪ 10s", "ctl:seekb"), middle, b("10s ⏩", "ctl:seekf")],
             [b("⏭ Skip", "ctl:skip", style="primary", emoji="skip"), b("⏹ Stop", "ctl:stop", style="danger", emoji="stop")],
-            [b("📋 Queue", "ctl:queue", emoji="queue"), b("🎤 Lyrics", "ctl:lyrics", emoji="lyrics")],
-            [b("➕ More", "ctl:more", emoji="add")],
+            [b("♾ Autoplay: " + ("on" if autoplay else "off"), "ctl:autoplay",
+               style="success" if autoplay else None, emoji="autoplay"),
+             b("📋 Queue", "ctl:queue", emoji="queue")],
         ]
+        last = [b("➕ More", "ctl:more", emoji="add")]
+        if lyrics:
+            last.insert(0, b("🎤 Lyrics", "ctl:lyrics", emoji="lyrics"))
+        rows.append(last)
+        return rows
     loop_label = {"off": "🔁 Loop: off", "track": "🔂 Loop: track", "queue": "🔁 Loop: queue"}[loop]
     return [
-        [b("⏪ -10s", "ctl:seekb"), b("⏩ +10s", "ctl:seekf")],
         [b("🔊 Unmute" if muted else "🔇 Mute", "ctl:unmute" if muted else "ctl:mute", emoji="mute"),
          b(loop_label, "ctl:loop", emoji="loop")],
         [b("🔀 Shuffle", "ctl:shuffle", emoji="shuffle"),

@@ -10,6 +10,8 @@ TOGGLES = {
     "auto_pause": ("⏸ Auto-pause when VC empty", "pause"),
     "idle_stop": ("💤 Leave when VC stays empty", "stop"),
     "autoplay": ("♾ Autoplay", "autoplay"),
+    "lyrics": ("🎤 Lyrics", "lyrics"),
+    "karaoke": ("🎶 Karaoke mode", "karaoke"),
 }
 
 
@@ -34,6 +36,8 @@ def hub(s: dict):
          _tog("Idle auto-stop", "idle_stop", s["idle_stop"], "stop")],
         [_tog("Autoplay", "autoplay", s["autoplay"], "autoplay"),
          b(f"🌐 {i18n.LANG_NAMES.get(s['language'], s['language'])}", "st:open:language", style="primary", emoji="language")],
+        [_tog("Lyrics", "lyrics", s["lyrics"], "lyrics"),
+         _tog("Karaoke mode", "karaoke", s["karaoke"], "lyrics")],
         [b("❌ Close", "close", style="danger", emoji="close")],
     ]
     return rows

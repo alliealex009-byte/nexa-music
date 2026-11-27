@@ -13,6 +13,7 @@ def home(logger_on: bool):
         [b("💎 Premium Users", "own:premium", style="primary"), b("📣 Broadcast", "own:bc:start", style="primary")],
         [b(f"📝 Logger: {'ON' if logger_on else 'OFF'}", "own:logger", style="success" if logger_on else "danger"),
          b("🧹 Clear cache", "own:clear")],
+        [b("🤖 Helpers", "own:helpers", style="success"), b("💾 Backup", "own:backup", style="success")],
         [b("🔎 Run diagnostics", "own:diag", style="primary")],
         [b("❌ Close", "close", style="danger", emoji="close")],
     ]
@@ -43,6 +44,8 @@ def cookies_menu(saved):
         [b("▶️ YouTube", "own:c:set:youtube", style="success"), b("🎵 Spotify", "own:c:set:spotify", style="success")],
         [b("🍎 Apple Music", "own:c:set:apple", style="success"), b("🌐 Other site", "own:c:other", style="primary")],
     ]
+    if any(sv == "youtube" for sv, *_ in saved):
+        rows.append([b("🔍 Test YouTube cookies", "own:c:test", style="primary")])
     for service, *_ in saved:
         rows.append([b(f"🗑 Remove {service}"[:40], f"own:c:rm:{service}"[:64], style="danger")])
     if saved:
@@ -76,3 +79,21 @@ def cancel_menu():
 
 def confirm_broadcast(count: int):
     return [[b(f"✅ Send to {count} users", "own:bc:send", style="success"), b("✖️ Cancel", "own:cancel", style="danger")]]
+
+
+def helpers_menu(helpers, can_add: bool):
+    rows = []
+    if can_add:
+        rows.append([b("➕ Add helper", "own:h:add", style="success")])
+    rows.append([b("🎨 Re-brand all (name, bio, photo)", "own:h:brand", style="primary")])
+    for h in helpers:
+        if h.source == "db":
+            rows.append([b(f"🗑 Remove helper #{h.index}", f"own:h:rm:{h.index}", style="danger")])
+    rows.append([BACK])
+    return rows
+
+
+def backup_menu(enabled: bool):
+    rows = [[b("💾 Back up now", "own:bk:now", style="success")]] if enabled else []
+    rows.append([BACK])
+    return rows
