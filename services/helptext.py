@@ -55,6 +55,8 @@ PAGES = {
     ),
     "dev": (
         "🧑‍💻 <b>Developer commands</b> (bot owner)\n\n"
+        "/owner — the owner panel: keys, proxies, cookies, emoji, premium, broadcast, diagnostics — all with buttons\n"
+        "/id — show your Telegram ID · /diag — health check\n"
         "/stats — users, groups, calls, server load\n/av — active voice chats\n"
         "/clearass — clear caches and assistant state\n/leaveall — assistant leaves idle groups\n"
         "/logger [on|off] — send play/error logs to the log chat\n/ping\n"

@@ -63,12 +63,34 @@ def to_track(song: dict) -> Track | None:
     )
 
 
+_good: str | None = None  # last host that answered
+
+
+def _bases() -> list[str]:
+    bases = list(config.SAAVN_API_BASES)
+    if _good in bases:
+        bases.remove(_good)
+        bases.insert(0, _good)
+    return bases
+
+
 async def _get(path: str, params: dict):
+    """Try every configured host in turn; raise the last error if none answers."""
+    global _good
+    last: Exception | None = None
     timeout = aiohttp.ClientTimeout(total=15)
-    async with aiohttp.ClientSession(timeout=timeout) as s:
-        async with s.get(f"{config.SAAVN_API_BASE}{path}", params=params) as r:
-            r.raise_for_status()
-            return await r.json(content_type=None)
+    for base in _bases():
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as s:
+                async with s.get(f"{base}{path}", params=params) as r:
+                    r.raise_for_status()
+                    data = await r.json(content_type=None)
+            _good = base
+            return data
+        except Exception as e:
+            last = e
+            log.info("saavn host %s failed: %s", base, type(e).__name__)
+    raise last or RuntimeError("no JioSaavn API host configured")
 
 
 def _results(data) -> list[dict]:

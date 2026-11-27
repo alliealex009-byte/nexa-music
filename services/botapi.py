@@ -3,6 +3,7 @@
 Used for messages that need newer Bot API features than the MTProto library knows about
 (coloured buttons via `style`, premium-emoji icons via `icon_custom_emoji_id`).
 """
+import json
 import logging
 
 import aiohttp
@@ -27,9 +28,19 @@ def _get_session() -> aiohttp.ClientSession:
     return _session
 
 
-async def call(method: str, **params):
+async def call(method: str, files: dict | None = None, **params):
+    """files: {field: (filename, bytes, content_type)} switches to a multipart upload."""
     url = f"{config.BOT_API_BASE}/bot{config.BOT_TOKEN}/{method}"
-    async with _get_session().post(url, json=params) as r:
+    if files:
+        form = aiohttp.FormData()
+        for key, value in params.items():
+            form.add_field(key, value if isinstance(value, str) else json.dumps(value))
+        for key, (name, data, ctype) in files.items():
+            form.add_field(key, data, filename=name, content_type=ctype)
+        request = _get_session().post(url, data=form)
+    else:
+        request = _get_session().post(url, json=params)
+    async with request as r:
         try:
             data = await r.json(content_type=None)
         except Exception:

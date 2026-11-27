@@ -107,7 +107,16 @@ async def ensure_assistant(chat_id: int) -> str | None:
         _joined.add(chat_id)
         return None
     except Exception as e:
-        log.info("assistant auto-join failed: %s", type(e).__name__)
+        name = type(e).__name__
+        log.info("assistant auto-join failed: %s", name)
+        if name == "UserAlreadyParticipant":
+            _joined.add(chat_id)
+            return None
+        if name == "InviteRequestSent":
+            return (
+                f"This group needs admin approval for new members. I sent a join request for @{me.username}: "
+                "approve it under the group's join requests (or add the assistant manually), then try again."
+            )
         return (
             f"I couldn't add the assistant automatically. Add @{me.username} to this group "
             "(or make me an admin with the invite-users right) and try again."
@@ -161,7 +170,7 @@ def _media(src: str, video: bool, seek: int = 0):
 async def _start_stream(chat_id: int, track: Track, seek: int = 0) -> bool:
     src = await audio_provider.get_source(track)
     if not src:
-        last_error[chat_id] = "source"
+        last_error[chat_id] = track.error or "source"
         return False
     try:
         await _calls.play(chat_id, _media(src, track.video, seek))

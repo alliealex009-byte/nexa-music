@@ -13,6 +13,37 @@ from services.models import Track
 
 log = logging.getLogger("audio")
 
+# async fn(text) -> None, set by app.py: tells the owner YouTube is blocking this server
+alert_hook = None
+_last_alert = 0.0
+ALERT_EVERY = 3600
+
+
+def classify(exc: Exception) -> str:
+    text = str(exc).lower()
+    if "sign in to confirm" in text or "not a bot" in text or "http error 429" in text or "too many requests" in text:
+        return "blocked"
+    if any(k in text for k in ("video unavailable", "private video", "has been removed", "not available in your country",
+                               "age-restricted", "members-only", "premieres in")):
+        return "unavailable"
+    return "failed"
+
+
+async def _alert_blocked():
+    global _last_alert
+    now = time.time()
+    if alert_hook is None or now - _last_alert < ALERT_EVERY:
+        return
+    _last_alert = now
+    try:
+        await alert_hook(
+            "⚠️ <b>YouTube is blocking this server.</b>\n"
+            "Songs can't be fetched until you add a YouTube <b>cookie</b> or a <b>proxy</b>.\n"
+            "Open the owner panel → 🍪 Cookies / 🧦 Proxies. (JioSaavn keeps working as a fallback.)"
+        )
+    except Exception:
+        log.exception("owner alert")
+
 
 def _filter():
     return yt_dlp.utils.match_filter_func(f"!is_live & duration<?{config.MAX_DOWNLOAD_SECONDS}")
@@ -61,7 +92,10 @@ async def _youtube_source(track: Track) -> str | None:
         url, _ = await ytdlp_util.run(_extract_work(track.url, False), use_proxy=False)
         return url
     except Exception as e:
-        log.info("youtube source failed: %s", str(e)[:160])
+        track.error = classify(e)
+        log.info("youtube source failed (%s): %s", track.error, str(e)[:160])
+        if track.error == "blocked":
+            await _alert_blocked()
         return None
 
 
@@ -95,7 +129,14 @@ async def get_source(track: Track) -> str | None:
         track.url, track.source, track.duration, track.thumbnail = real.url, real.source, real.duration, real.thumbnail
         track.stream_url = real.stream_url
         return await get_source(track)
-    return await _youtube_source(track) or await _saavn_fallback(track)
+    track.error = ""
+    src = await _youtube_source(track)
+    if src:
+        return src
+    err = track.error
+    src = await _saavn_fallback(track)
+    track.error = "" if src else (err or "failed")
+    return src
 
 
 def purge_cache(max_age: int | None = None, keep: set[str] | None = None) -> int:

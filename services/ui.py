@@ -6,6 +6,7 @@ the MTProto library with plain buttons. So the bot always answers, whatever the 
 """
 import asyncio
 import logging
+import os
 import re
 
 import config
@@ -15,6 +16,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database import credentials as cred
 from database import groups as groups_db
 from services import botapi
+from utils.text import strip_html
 
 log = logging.getLogger("ui")
 
@@ -23,6 +25,8 @@ bot_username = ""
 _emoji: dict[str, str] = {}
 _flags = {"icons": True, "style": True}
 _tasks: set[asyncio.Task] = set()
+_photo_ids: dict[str, str] = {}  # local banner path -> Telegram file_id (upload once)
+CAPTION_LIMIT = 1024
 
 # Names the owner can attach a premium emoji id to (/setemoji name id)
 EMOJI_NAMES = [
@@ -108,7 +112,7 @@ def plain_markup(rows):
 _RETRYABLE = ("button", "style", "icon", "emoji", "reply markup", "entities", "parse", "can't parse")
 
 
-async def _post(method: str, params: dict, rows):
+async def _post(method: str, params: dict, rows, files: dict | None = None):
     levels = [(_flags["icons"], _flags["style"]), (False, _flags["style"]), (False, False)]
     seen, last = set(), None
     for icons, style in levels:
@@ -123,7 +127,7 @@ async def _post(method: str, params: dict, rows):
                 if key in p:
                     p[key] = strip_emoji_tags(p[key])
         try:
-            return await botapi.call(method, **p)
+            return await botapi.call(method, files=files, **p)
         except botapi.BotApiError as e:
             desc = e.description.lower()
             if e.code != 400 or not any(k in desc for k in _RETRYABLE):
@@ -142,17 +146,30 @@ async def send(chat_id: int, text: str, rows=None, *, reply_to: int | None = Non
                sticky: bool = False) -> int | None:
     """Send a message. Returns its id (None if it could not be sent at all)."""
     params: dict = {"chat_id": chat_id, "parse_mode": "HTML"}
+    files = None
+    if photo and len(strip_html(text)) > CAPTION_LIMIT:
+        photo = None  # too long for a caption: send as a plain message
     if photo:
         method = "sendPhoto"
-        params.update(photo=photo, caption=text)
+        params.update(caption=text)
+        if os.path.exists(photo):  # local banner: upload once, reuse the file_id afterwards
+            if photo in _photo_ids:
+                params["photo"] = _photo_ids[photo]
+            else:
+                with open(photo, "rb") as f:
+                    files = {"photo": (os.path.basename(photo), f.read(), "image/jpeg")}
+        else:
+            params["photo"] = photo
     else:
         method = "sendMessage"
         params.update(text=text, link_preview_options={"is_disabled": True})
     if reply_to:
         params["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
     try:
-        res = await _post(method, params, rows)
+        res = await _post(method, params, rows, files)
         mid = res["message_id"]
+        if files and res.get("photo"):
+            _photo_ids[photo] = res["photo"][-1]["file_id"]
     except Exception as e:
         log.info("raw send failed (%s); using fallback", e)
         mid = await _fallback_send(chat_id, text, rows, reply_to, photo)
@@ -219,7 +236,13 @@ async def _fallback_edit(chat_id, message_id, text, rows, caption):
 
 async def edit_cb(q, text: str, rows=None):
     """Edit the message a callback button belongs to."""
-    await edit(q.message.chat.id, q.message.id, text, rows, caption=bool(getattr(q.message, "photo", None)))
+    is_photo = bool(getattr(q.message, "photo", None))
+    if is_photo and len(strip_html(text)) > CAPTION_LIMIT:
+        # a photo caption can't hold this much text: replace the photo message with a text message
+        await delete(q.message.chat.id, q.message.id)
+        await send(q.message.chat.id, text, rows, sticky=True)
+        return
+    await edit(q.message.chat.id, q.message.id, text, rows, caption=is_photo)
 
 
 async def edit_markup(chat_id: int, message_id: int, rows):

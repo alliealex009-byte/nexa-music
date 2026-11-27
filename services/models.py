@@ -13,6 +13,7 @@ class Track:
     source: str = "youtube"
     stream_url: str = ""  # direct audio URL (JioSaavn) or local path (Telegram file)
     video: bool = False  # play as video in the video chat
+    error: str = ""  # why the last attempt to get a stream failed: blocked | unavailable | failed
 
     @staticmethod
     def source_for(url: str) -> str:
