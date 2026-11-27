@@ -1,4 +1,5 @@
 import os
+import re
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,7 +28,18 @@ def _bool(name: str, default: bool) -> bool:
 API_ID = _int("API_ID")
 API_HASH = os.getenv("API_HASH", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-SESSION_STRING = os.getenv("SESSION_STRING", "")  # assistant userbot (joins voice chats)
+SESSION_STRING = os.getenv("SESSION_STRING", "")  # helper #1: assistant userbot (joins voice chats)
+# more helpers: space/comma separated session strings here, or add them from the owner panel (up to MAX_HELPERS)
+SESSION_STRINGS = [x for x in re.split(r"[\s,]+", os.getenv("SESSION_STRINGS", "")) if x]
+MAX_HELPERS = _int("MAX_HELPERS", 10)
+HELPER_BIO = _str("HELPER_BIO") or "Always ads-free music 🎵"  # Telegram allows 70 characters
+HELPER_DP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "dp.jpg")
+HELPER_BRANDING = _bool("HELPER_BRANDING", True)  # name helpers "<BOT_NAME> 1, 2, ..." and set bio + photo
+
+# --- MongoDB (free Atlas M0 is fine): snapshots of the bot's data so it survives a VPS rebuild
+MONGO_URL = _str("MONGO_URL")
+MONGO_DB = _str("MONGO_DB") or "ria_music"
+BACKUP_INTERVAL_MINUTES = _int("BACKUP_INTERVAL_MINUTES", 30)
 
 OWNER_ID = _int("OWNER_ID")
 BOT_NAME = os.getenv("BOT_NAME", "RIA Music")
@@ -51,6 +63,9 @@ SAAVN_API_STYLE = os.getenv("SAAVN_API_STYLE", "dev").lower()  # dev | legacy
 SAAVN_FALLBACK = _bool("SAAVN_FALLBACK", True)  # try JioSaavn when YouTube fails
 
 # --- Lyrics (community database, no key needed)
+LIVE_UPDATE_SECONDS = float(os.getenv("LIVE_UPDATE_SECONDS", "7"))  # now-playing progress refresh
+KARAOKE_UPDATE_SECONDS = float(os.getenv("KARAOKE_UPDATE_SECONDS", "4"))
+SEARCH_TIMEOUT = int(os.getenv("SEARCH_TIMEOUT", "45"))  # seconds before a stuck search gives up
 LYRICS_API_BASE = os.getenv("LYRICS_API_BASE", "https://lrclib.net/api").rstrip("/")
 
 # --- Proxies (SOCKS5 only; managed by the owner in DM)
@@ -71,6 +86,7 @@ MAX_TG_FILE_MB = _int("MAX_TG_FILE_MB", 200)
 ENABLE_VPLAY = _bool("ENABLE_VPLAY", True)
 VIDEO_MAX_HEIGHT = _int("VIDEO_MAX_HEIGHT", 480)  # keep video light on the VPS
 
+AUDIO_QUALITY = _str("AUDIO_QUALITY") or "HIGH"  # STUDIO | HIGH | MEDIUM | LOW (lower = less CPU/bandwidth)
 MAX_QUEUE = _int("MAX_QUEUE", 50)
 MAX_PLAYLIST_IMPORT = _int("MAX_PLAYLIST_IMPORT", 25)  # songs taken from a playlist/album link
 MIX_SIZE = _int("MIX_SIZE", 10)
