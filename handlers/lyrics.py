@@ -1,0 +1,32 @@
+from pyrogram import Client, filters
+
+from services import lyrics, queue_manager, ui
+from utils import guards
+from utils.text import chunk, esc
+
+
+async def send_lyrics(chat_id: int, query: str, reply_to: int | None = None):
+    progress = await ui.send(chat_id, "🎤 Looking for lyrics…", reply_to=reply_to)
+    found = await lyrics.find(query)
+    if progress:
+        await ui.delete(chat_id, progress)
+    if not found:
+        return await ui.send(chat_id, f"❌ No lyrics found for <b>{esc(lyrics.clean_title(query))}</b>.", reply_to=reply_to)
+    heading, text = found
+    parts = chunk(esc(text), 3500)
+    for i, part in enumerate(parts[:6]):
+        head = f"🎤 <b>{esc(heading)}</b>\n\n" if i == 0 else ""
+        await ui.send(chat_id, head + part, reply_to=reply_to if i == 0 else None)
+    if len(parts) > 6:
+        await ui.send(chat_id, "…lyrics truncated.")
+
+
+@Client.on_message(filters.command(guards.with_silent(guards.LYRICS)))
+async def lyrics_cmd(client, message):
+    query = guards.query_of(message)
+    if not query:
+        cur = queue_manager.current(message.chat.id)
+        query = cur.title if cur else ""
+    if not query:
+        return await ui.reply(message, "Usage: <code>/lyrics song name</code> (or use it while a song is playing)")
+    await send_lyrics(message.chat.id, query, message.id)
