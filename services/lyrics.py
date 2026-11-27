@@ -42,3 +42,52 @@ async def find(query: str) -> tuple[str, str] | None:
         if text:
             return f"{item.get('artistName', '')} - {item.get('trackName', '')}".strip(" -"), text
     return None
+
+
+_LRC = re.compile(r"\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]")
+
+
+def parse_lrc(text: str) -> list[tuple[float, str]]:
+    """'[01:23.45] some words' lines -> sorted [(seconds, words)]; empty lines are kept as pauses."""
+    out = []
+    for line in (text or "").splitlines():
+        stamps = list(_LRC.finditer(line))
+        if not stamps:
+            continue
+        words = line[stamps[-1].end():].strip()
+        for m in stamps:
+            frac = float("0." + m.group(3)) if m.group(3) else 0.0
+            out.append((int(m.group(1)) * 60 + int(m.group(2)) + frac, words))
+    return sorted(out)
+
+
+def line_at(lines: list[tuple[float, str]], position: float) -> str:
+    """The lyric line that is being sung at `position` seconds ('' before the first line / in a pause)."""
+    current = ""
+    for ts, words in lines:
+        if ts > position:
+            break
+        current = words
+    return current
+
+
+async def find_synced(query: str, duration: int = 0) -> list[tuple[float, str]]:
+    """Time-stamped lyrics for karaoke mode ([] if the database has none)."""
+    query = clean_title(query)
+    if not query:
+        return []
+    try:
+        results = await _get("/search", {"q": query}) or []
+    except Exception as e:
+        log.info("synced lyrics search failed: %s", type(e).__name__)
+        return []
+    best = None
+    for item in results:
+        if not (item.get("syncedLyrics") or "").strip():
+            continue
+        gap = abs((item.get("duration") or 0) - duration) if duration else 0
+        if best is None or gap < best[0]:
+            best = (gap, item["syncedLyrics"])
+        if gap <= 3:
+            break
+    return parse_lrc(best[1]) if best else []

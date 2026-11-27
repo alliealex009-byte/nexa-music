@@ -63,6 +63,16 @@ def _url_work(url: str, flat: bool):
     return work
 
 
+def _single_youtube_id(url: str) -> str | None:
+    if _is_collection_url(url):
+        return None
+    host = link_resolver.host_of(url)
+    if host not in ("youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"):
+        return None
+    m = YT_ID_RE.search(url)
+    return m.group(1) if m else None
+
+
 def _is_collection_url(url: str) -> bool:
     return bool(re.search(r"[?&]list=|/playlist|/sets/|/album/", url)) and "watch?v=" not in url.split("list=")[0]
 
@@ -75,6 +85,20 @@ async def _from_url(url: str, limit: int) -> list[Track]:
     if plat:  # metadata-only platforms -> lazy search tracks
         queries = await link_resolver.to_queries(url, limit)
         return [Track(title=q, url=f"search:{q}", source="query") for q in queries]
+    vid = _single_youtube_id(url)
+    if vid:  # one video: read its details through the API / oEmbed so a blocked yt-dlp can't hide it
+        track = (await youtube_api.video(vid)) or (await youtube_api.oembed(vid))
+        if track:
+            return [track]
+        try:
+            info, _ = await ytdlp_util.run(_url_work(url, flat=False))
+            if info:
+                return [Track(title=info.get("title") or "Unknown", url=info.get("webpage_url") or url,
+                              duration=int(info.get("duration") or 0), thumbnail=info.get("thumbnail", ""))]
+        except Exception:
+            pass
+        # still playable: the stream step reports the real reason if YouTube refuses it
+        return [Track(title="YouTube video", url=f"https://www.youtube.com/watch?v={vid}")]
     try:
         info, _ = await ytdlp_util.run(_url_work(url, flat=_is_collection_url(url)))
     except Exception:

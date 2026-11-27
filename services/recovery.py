@@ -20,13 +20,16 @@ async def _active_calls(calls) -> set[int]:
     return {getattr(x, "chat_id", x) for x in c}
 
 
-async def check_once(calls) -> list[int]:
-    """Returns the chats that were restarted."""
+async def check_once(calls=None) -> list[int]:
+    """Returns the chats that were restarted. `calls=None` checks every helper's call engine."""
     from services import player
 
     restarted = []
     try:
-        active = await _active_calls(calls)
+        engines = [calls] if calls is not None else [h.calls for h in player.helpers()]
+        active: set[int] = set()
+        for engine in engines:
+            active |= await _active_calls(engine)
     except Exception:
         return restarted
     chats = set(queue_manager.active_chats())
@@ -48,7 +51,7 @@ async def check_once(calls) -> list[int]:
     return restarted
 
 
-async def _loop(calls):
+async def _loop(calls=None):
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
         try:
@@ -57,5 +60,5 @@ async def _loop(calls):
             log.exception("watchdog")
 
 
-def start_watchdog(bot, calls):
+def start_watchdog(bot, calls=None):
     return asyncio.get_event_loop().create_task(_loop(calls))

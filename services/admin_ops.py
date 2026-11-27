@@ -1,4 +1,5 @@
 """Owner operations shared by the DM commands and the owner panel (all return HTML text)."""
+import asyncio
 import re
 import shutil
 import time
@@ -18,7 +19,7 @@ KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}")
 def scrub(text: str) -> str:
     """Never echo secrets back, even inside error messages."""
     text = KEY_RE.sub("AIza…", text)
-    return re.sub(r"(socks5h?://[^:/@\s]+:)[^@\s]+@", r"\1***@", text)
+    return re.sub(r"((?:socks[45]h?|https?)://[^:/@\s]+:)[^@\s]+@", r"\1***@", text)
 
 
 # ------------------------------------------------------------------ API keys
@@ -54,28 +55,43 @@ async def add_keys(text: str) -> list[str]:
 async def proxies_overview() -> str:
     rows = await cred.list_proxies()
     if not rows:
-        return "🧦 <b>SOCKS5 proxies</b>\nNone added — downloads use the server's own connection."
+        return "🧦 <b>Proxies</b>\nNone added — downloads use the server's own connection."
     lines = []
     for pid, url, fails, ms, _ in rows:
         state = f"✅ {ms} ms" if fails == 0 and ms else f"⚠️ {fails} failed check(s)"
         lines.append(f"#{pid} <code>{esc(proxy_manager.mask(url))}</code> — {state}")
-    return ("🧦 <b>SOCKS5 proxies</b>\n" + "\n".join(lines)
+    return ("🧦 <b>Proxies</b>\n" + "\n".join(lines)
             + f"\n\nChecked every {config.PROXY_CHECK_INTERVAL}s; removed after {config.PROXY_MAX_FAILS} failed checks.")
 
 
 async def add_proxies(text: str) -> list[str]:
-    raw = [l.strip() for l in re.split(r"[\n,]+", text) if l.strip()]
+    """Health-check every pasted proxy (20 at a time) and report a short summary, not one line per proxy."""
+    raw = [l.strip() for l in re.split(r"[\n,]+", text) if l.strip() and not l.strip().startswith("#")]
     if not raw:
         return ["❌ I didn't find a proxy in that message."]
-    lines = []
-    for item in raw[:20]:
-        try:
-            status, masked = await proxy_manager.add(item)
-        except proxy_manager.ProxyError as e:
-            lines.append(f"❌ {esc(scrub(str(e)))}")
-            continue
-        icon = {"ok": "✅ added", "dead": "❌ not reachable (not added)", "duplicate": "ℹ️ already added"}[status]
-        lines.append(f"{icon}: <code>{esc(masked)}</code>")
+    raw = raw[:300]
+    sem = asyncio.Semaphore(20)
+
+    async def one(item):
+        async with sem:
+            try:
+                return await proxy_manager.add(item)
+            except proxy_manager.ProxyError as e:
+                return "invalid", scrub(str(e))
+            except Exception:
+                return "dead", ""
+
+    results = await asyncio.gather(*(one(i) for i in raw))
+    count = {k: sum(1 for st, _ in results if st == k) for k in ("ok", "dead", "duplicate", "invalid")}
+    lines = [f"✅ added: {count['ok']}   ❌ not reachable: {count['dead']}   ℹ️ duplicates: {count['duplicate']}"
+             f"   ⚠️ unreadable: {count['invalid']}"]
+    for st, masked in [r for r in results if r[0] == "ok"][:15]:
+        lines.append(f"✅ <code>{esc(masked)}</code>")
+    if count["ok"] > 15:
+        lines.append(f"… and {count['ok'] - 15} more")
+    if count["ok"] == 0 and count["dead"]:
+        lines.append("\nℹ️ Free public proxies are usually dead or blocked by YouTube. A YouTube cookie (🍪) or a paid "
+                     "residential SOCKS5 proxy works far better.")
     return lines
 
 
@@ -92,6 +108,51 @@ async def cookies_overview() -> str:
     return "🍪 <b>Cookies</b>\n" + "\n".join(lines)
 
 
+async def verify_youtube_cookies(content: str | None = None) -> str:
+    """Really try the stored YouTube cookies: can yt-dlp read a video's streams with them?"""
+    content = content or await cred.get_cookies("youtube")
+    if not content:
+        return "🍪 No YouTube cookies saved yet."
+    has_login, expired, total = cookie_manager.login_state(content)
+    notes = []
+    if not has_login:
+        notes.append("⚠️ These cookies contain no Google login (SID / __Secure-3PSID). They were probably exported "
+                     "while logged out.")
+    if expired and expired >= total / 2:
+        notes.append(f"⚠️ {expired} of {total} cookies are already expired. Export them again.")
+    jar = cookie_manager.write_jar(content)
+
+    def work():
+        import yt_dlp
+
+        o = {**ytdlp_util.base_opts(None, jar), "skip_download": True, "noplaylist": True}
+        with yt_dlp.YoutubeDL(o) as ydl:
+            info = ydl.extract_info(TEST_VIDEO, download=False)
+            return len(info.get("formats") or []), bool(info.get("url") or any(f.get("acodec") != "none" for f in info.get("formats", [])))
+
+    try:
+        count, has_audio = await asyncio.wait_for(asyncio.to_thread(work), 90)
+        if has_audio and count:
+            verdict = f"✅ <b>YouTube cookies work</b> — {count} stream formats found."
+        else:
+            verdict = "⚠️ YouTube answered, but no audio streams came back (likely missing Deno / outdated yt-dlp)."
+    except asyncio.TimeoutError:
+        verdict = "⚠️ The test timed out (YouTube or the network is very slow)."
+    except Exception as e:
+        kind = audio_provider.classify(e)
+        reason = {
+            "blocked": "YouTube still says <i>sign in / not a bot</i> — the cookies are logged out, expired, or this "
+                       "server's IP is flagged. Export fresh cookies from a <b>private window</b> logged in to YouTube, "
+                       "close the window, then upload again; add a proxy if it persists.",
+            "js": "yt-dlp can't solve YouTube's JavaScript challenge. Deno is missing or yt-dlp is outdated — rebuild the image.",
+            "unavailable": "YouTube says the test video is unavailable from this server.",
+        }.get(kind, f"yt-dlp failed: {esc(scrub(str(e))[:160])}")
+        verdict = f"❌ <b>Cookies did not help:</b> {reason}"
+    finally:
+        cookie_manager.cleanup(jar)
+    return "\n".join([verdict] + notes)
+
+
 async def save_cookies(service: str, raw: str) -> str:
     """Normalise + store. Raises cookie_manager.CookieError with a user-safe message."""
     content = cookie_manager.normalize(raw, service)
@@ -99,8 +160,12 @@ async def save_cookies(service: str, raw: str) -> str:
     count, domains = cookie_manager.summarize(content)
     note = ""
     if service in ("spotify", "apple"):
-        note = "\nℹ️ Used only to read Spotify/Apple link pages — never sent to other sites."
-    return f"✅ Saved <b>{esc(service)}</b> cookies: {count} cookies ({esc(', '.join(domains[:4]))}).{note}"
+        note = ("\nℹ️ Used only to read Spotify/Apple link pages — never sent to other sites. "
+                "Songs themselves are always played from YouTube/JioSaavn.")
+    out = f"✅ Saved <b>{esc(service)}</b> cookies: {count} cookies ({esc(', '.join(domains[:4]))}).{note}"
+    if service == "youtube":
+        out += "\n\n🔍 Testing them now…\n" + await verify_youtube_cookies(content)
+    return out
 
 
 # ------------------------------------------------------------------ premium emoji
@@ -159,23 +224,37 @@ async def clear_cache() -> str:
 
 
 # ------------------------------------------------------------------ diagnostics
-TEST_VIDEO = "https://www.youtube.com/watch?v=jNQXAC9IJRE"
+TEST_VIDEO = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
 async def diagnostics() -> str:
     lines = ["🔎 <b>Diagnostics</b>"]
     lines.append("✅ ffmpeg found" if shutil.which("ffmpeg") else "❌ ffmpeg missing (install it; the Docker image has it)")
+    for helper in player.helpers():
+        try:
+            me = await player.assistant_info(helper)
+            lines.append(f"✅ Helper #{helper.index}: @{esc(me.username or str(me.id))}")
+        except Exception as e:
+            lines.append(f"❌ Helper #{helper.index} not reachable ({esc(type(e).__name__)}) — check its session string")
+
     try:
-        me = await player.assistant_info()
-        lines.append(f"✅ Assistant: @{esc(me.username or str(me.id))}")
-    except Exception as e:
-        lines.append(f"❌ Assistant account not reachable ({esc(type(e).__name__)}) — check SESSION_STRING")
+        import yt_dlp.version as _v
+
+        lines.append(f"ℹ️ yt-dlp {esc(_v.__version__)}")
+    except Exception:
+        pass
+    runtime = ytdlp_util.js_runtime()
+    lines.append(f"✅ JS runtime: {runtime}" if runtime else "❌ <b>No JS runtime (Deno)</b> — YouTube extraction will fail. "
+                 "Rebuild the Docker image from the latest repo.")
 
     def work(opts):
         import yt_dlp
 
         with yt_dlp.YoutubeDL({**opts, "skip_download": True, "noplaylist": True}) as ydl:
-            return ydl.extract_info(TEST_VIDEO, download=False)
+            info = ydl.extract_info(TEST_VIDEO, download=False)
+            if not any(f.get("acodec") not in (None, "none") for f in info.get("formats", [])):
+                raise RuntimeError("no audio formats (challenge solving failed)")
+            return info
 
     started = time.monotonic()
     try:
@@ -184,7 +263,9 @@ async def diagnostics() -> str:
     except Exception as e:
         kind = audio_provider.classify(e)
         if kind == "blocked":
-            lines.append("❌ <b>YouTube is blocking this server</b> → add a YouTube cookie and/or a proxy")
+            lines.append("❌ <b>YouTube is blocking this server</b> → add a YouTube cookie (then 🔍 Test) and/or a proxy")
+        elif kind == "js":
+            lines.append("❌ <b>yt-dlp can't solve YouTube's JS challenge</b> → Deno missing or yt-dlp outdated; rebuild the image")
         else:
             lines.append(f"❌ YouTube check failed: {esc(scrub(str(e))[:120])}")
     cookies = [c[0] for c in await cred.all_cookies()]

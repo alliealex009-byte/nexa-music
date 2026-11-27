@@ -24,7 +24,7 @@ async def humans_in_call(chat_id: int) -> int | None:
         parts = await player.participants(chat_id)
     except Exception:
         return None
-    me = await player.assistant_id()
+    me = await player.assistant_id(chat_id)
     return sum(1 for p in parts if getattr(p, "user_id", None) != me)
 
 

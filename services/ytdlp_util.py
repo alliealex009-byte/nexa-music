@@ -1,6 +1,7 @@
 """Shared yt-dlp plumbing: cookies jar, SOCKS5 proxies (then direct), thread offloading."""
 import asyncio
 import logging
+import shutil
 
 import yt_dlp
 
@@ -9,8 +10,20 @@ from services import cookie_manager, proxy_manager
 log = logging.getLogger("ytdlp")
 
 
+def js_runtime() -> str | None:
+    """YouTube's signature/'n' challenges need a JavaScript runtime. Deno is installed in the Docker image."""
+    for name in ("deno", "node", "bun"):
+        if shutil.which(name):
+            return name
+    return None
+
+
 def base_opts(proxy: str | None = None, jar: str | None = None) -> dict:
-    opts = {"quiet": True, "no_warnings": True, "geo_bypass": True, "socket_timeout": 20, "retries": 2}
+    opts = {"quiet": True, "no_warnings": True, "geo_bypass": True, "socket_timeout": 20, "retries": 2,
+            "remote_components": ["ejs:github"]}  # challenge-solver scripts (also bundled with yt-dlp[default])
+    runtime = js_runtime()
+    if runtime:
+        opts["js_runtimes"] = {runtime: {}}
     if proxy:
         opts["proxy"] = proxy_manager.for_ytdlp(proxy)
     if jar:

@@ -119,3 +119,49 @@ async def search(query: str, limit: int = 5) -> list[Track] | None:
             log.warning("YouTube API request failed: %s", type(e).__name__)
             return None
     return None
+
+
+async def video(video_id: str) -> Track | None:
+    """Title/duration/thumbnail of one video through the API (no yt-dlp, so it works even when YouTube blocks us)."""
+    for key_id, key in await cred.usable_keys():
+        try:
+            data = await _get("videos", {"part": "contentDetails,snippet", "id": video_id}, key)
+        except KeyProblem as e:
+            if e.kind == "quota":
+                await cred.mark_exhausted(key_id, next_reset())
+            elif e.kind == "invalid":
+                await cred.mark_invalid(key_id)
+            else:
+                return None
+            continue
+        except Exception:
+            return None
+        items = data.get("items") or []
+        if not items:
+            return None
+        v = items[0]
+        sn = v["snippet"]
+        thumbs = sn.get("thumbnails", {})
+        return Track(
+            title=html.unescape(sn.get("title", "Unknown")),
+            url=f"https://www.youtube.com/watch?v={video_id}",
+            duration=iso_seconds(v["contentDetails"].get("duration", "")),
+            thumbnail=(thumbs.get("high") or thumbs.get("default") or {}).get("url", ""),
+        )
+    return None
+
+
+async def oembed(video_id: str) -> Track | None:
+    """Keyless fallback: title + thumbnail from YouTube's oEmbed endpoint."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.get("https://www.youtube.com/oembed",
+                             params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"}) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json(content_type=None)
+    except Exception:
+        return None
+    return Track(title=html.unescape(data.get("title", "Unknown")), url=f"https://www.youtube.com/watch?v={video_id}",
+                 thumbnail=data.get("thumbnail_url", ""))

@@ -23,24 +23,31 @@ def classify(exc: Exception) -> str:
     text = str(exc).lower()
     if "sign in to confirm" in text or "not a bot" in text or "http error 429" in text or "too many requests" in text:
         return "blocked"
+    if any(k in text for k in ("signature solving failed", "n challenge solving failed", "only images are available",
+                               "no supported javascript runtime", "challenge solving failed")):
+        return "js"
     if any(k in text for k in ("video unavailable", "private video", "has been removed", "not available in your country",
                                "age-restricted", "members-only", "premieres in")):
         return "unavailable"
     return "failed"
 
 
-async def _alert_blocked():
+async def _alert_blocked(kind: str = "blocked"):
     global _last_alert
     now = time.time()
     if alert_hook is None or now - _last_alert < ALERT_EVERY:
         return
     _last_alert = now
     try:
-        await alert_hook(
-            "⚠️ <b>YouTube is blocking this server.</b>\n"
-            "Songs can't be fetched until you add a YouTube <b>cookie</b> or a <b>proxy</b>.\n"
-            "Open the owner panel → 🍪 Cookies / 🧦 Proxies. (JioSaavn keeps working as a fallback.)"
-        )
+        if kind == "js":
+            text = ("⚠️ <b>yt-dlp can't solve YouTube's JavaScript challenge.</b>\n"
+                    "The Deno runtime is missing or yt-dlp is outdated. Rebuild the image "
+                    "(<code>docker compose build --no-cache</code>) and run /diag.")
+        else:
+            text = ("⚠️ <b>YouTube is blocking this server.</b>\n"
+                    "Songs can't be fetched until you add a working YouTube <b>cookie</b> or a <b>proxy</b>.\n"
+                    "Open the owner panel → 🍪 Cookies (use 🔍 Test) / 🧦 Proxies. (JioSaavn keeps working as a fallback.)")
+        await alert_hook(text)
     except Exception:
         log.exception("owner alert")
 
@@ -56,7 +63,7 @@ def _fmt(video: bool) -> str:
     return "bestaudio/best"
 
 
-def _download_work(url: str, video: bool):
+def _download_work(url: str, video: bool, track: Track | None = None):
     def work(opts):
         os.makedirs(config.CACHE_DIR, exist_ok=True)
         o = {**opts, "format": _fmt(video), "noplaylist": True,
@@ -66,17 +73,29 @@ def _download_work(url: str, video: bool):
             info = ydl.extract_info(url, download=True)
             if not info:
                 raise RuntimeError("filtered")
+            _learn(track, info)
             return ydl.prepare_filename(info)
     return work
 
 
-def _extract_work(url: str, video: bool):
+def _learn(track: Track | None, info: dict):
+    """Fill in what the search/link step could not know (duration for the progress bar, thumbnail)."""
+    if track is None:
+        return
+    if not track.duration and info.get("duration"):
+        track.duration = int(info["duration"])
+    if not track.thumbnail and info.get("thumbnail"):
+        track.thumbnail = info["thumbnail"]
+
+
+def _extract_work(url: str, video: bool, track: Track | None = None):
     def work(opts):
         o = {**opts, "format": _fmt(video), "noplaylist": True, "skip_download": True, "match_filter": _filter()}
         with yt_dlp.YoutubeDL(o) as ydl:
             info = ydl.extract_info(url, download=False)
             if not info or not info.get("url"):
                 raise RuntimeError("no stream url")
+            _learn(track, info)
             return info["url"]
     return work
 
@@ -87,15 +106,15 @@ async def _youtube_source(track: Track) -> str | None:
     use_proxy = bool(await proxy_manager.pick())
     try:
         if use_proxy or track.video:
-            path, _ = await ytdlp_util.run(_download_work(track.url, track.video))
+            path, _ = await ytdlp_util.run(_download_work(track.url, track.video, track))
             return path if os.path.exists(path) else None
-        url, _ = await ytdlp_util.run(_extract_work(track.url, False), use_proxy=False)
+        url, _ = await ytdlp_util.run(_extract_work(track.url, False, track), use_proxy=False)
         return url
     except Exception as e:
         track.error = classify(e)
         log.info("youtube source failed (%s): %s", track.error, str(e)[:160])
-        if track.error == "blocked":
-            await _alert_blocked()
+        if track.error in ("blocked", "js"):
+            await _alert_blocked(track.error)
         return None
 
 

@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from pytgcalls import filters
 from pytgcalls.types import MediaStream
@@ -14,9 +15,26 @@ from services.models import Track
 log = logging.getLogger("player")
 
 _bot = None
-_assistant = None
+_assistant = None  # helper #1 (kept for older call sites)
 _calls = None
 _assistant_id: int | None = None
+
+
+@dataclass(eq=False)
+class Helper:
+    """One assistant account (a Telegram user logged in with a session string) and its voice-call engine."""
+    client: object
+    calls: object
+    index: int
+    id: int | None = None
+    username: str = ""
+    name: str = ""
+    source: str = "env"  # env | db
+    db_id: int | None = None
+
+
+_helpers: list[Helper] = []
+_assign: dict[int, Helper] = {}  # chat -> the helper that plays there (one helper can serve many chats at once)
 
 manual_paused: set[int] = set()  # paused by a person
 auto_paused: set[int] = set()  # paused because nobody is listening
@@ -27,14 +45,48 @@ _joined: set[int] = set()
 last_error: dict[int, str] = {}
 
 # UI hooks, set by handlers: async fn(chat_id, ...) -> None
-hooks = {"now_playing": None, "notice": None}
+hooks = {"now_playing": None, "notice": None, "state": None, "ended": None}
 
 
 def setup(bot, assistant, calls):
+    """Register the bot and helper #1. More helpers join later through add_helper()."""
     global _bot, _assistant, _calls
     _bot, _assistant, _calls = bot, assistant, calls
+    _helpers.clear()
+    _assign.clear()
+    add_helper(assistant, calls)
 
-    @calls.on_update(filters.stream_end())
+
+def add_helper(client, calls, source: str = "env", db_id: int | None = None) -> Helper:
+    helper = Helper(client=client, calls=calls, index=len(_helpers) + 1, source=source, db_id=db_id)
+    _helpers.append(helper)
+    _wire(calls)
+    return helper
+
+
+def helpers() -> list[Helper]:
+    return list(_helpers)
+
+
+def remove_helper(helper: Helper):
+    _helpers.remove(helper)
+    for chat in [c for c, h in _assign.items() if h is helper]:
+        _assign.pop(chat, None)
+        _joined.discard(chat)
+    for n, h in enumerate(_helpers, 1):
+        h.index = n
+
+
+def helper_for(chat_id: int) -> Helper:
+    return _assign.get(chat_id) or _helpers[0]
+
+
+def _load(helper: Helper) -> int:
+    return sum(1 for h in _assign.values() if h is helper)
+
+
+def _wire(calls):
+    @calls.on_update(filters.stream_end)
     async def _on_end(_, update):
         await play_next(update.chat_id)
 
@@ -61,7 +113,26 @@ async def _notice(chat_id: int, text: str):
             log.exception("notice hook")
 
 
+def _fire(name: str, chat_id: int):
+    """Run a UI hook in the background (card refresh / card end); never breaks playback."""
+    fn = hooks.get(name)
+    if not fn:
+        return
+    try:
+        asyncio.get_running_loop().create_task(_safe(fn, chat_id))
+    except RuntimeError:
+        pass
+
+
+async def _safe(fn, chat_id: int):
+    try:
+        await fn(chat_id)
+    except Exception:
+        log.exception("ui hook")
+
+
 def _reset(chat_id: int):
+    _fire("ended", chat_id)
     manual_paused.discard(chat_id)
     auto_paused.discard(chat_id)
     muted.discard(chat_id)
@@ -70,40 +141,82 @@ def _reset(chat_id: int):
 
 
 # ------------------------------------------------------------------ assistant presence
-async def assistant_info():
-    global _assistant_id
-    me = await _assistant.get_me()
-    _assistant_id = me.id
+async def helper_me(helper: Helper):
+    me = await helper.client.get_me()
+    helper.id, helper.username = me.id, me.username or ""
+    helper.name = " ".join(x for x in (getattr(me, "first_name", None), getattr(me, "last_name", None)) if x)
     return me
 
 
-async def assistant_id() -> int:
-    if _assistant_id is None:
-        await assistant_info()
-    return _assistant_id  # type: ignore[return-value]
+async def assistant_info(helper: Helper | None = None):
+    """Profile of a helper account (helper #1 by default)."""
+    global _assistant_id
+    helper = helper or _helpers[0]
+    me = await helper_me(helper)
+    if helper is _helpers[0]:
+        _assistant_id = me.id
+    return me
+
+
+async def assistant_id(chat_id: int | None = None) -> int:
+    helper = helper_for(chat_id) if chat_id is not None else _helpers[0]
+    if helper.id is None:
+        await helper_me(helper)
+    return helper.id  # type: ignore[return-value]
+
+
+async def _member_state(chat_id: int, helper: Helper) -> str:
+    """'member' | 'banned' | 'none'"""
+    if helper.id is None:
+        await helper_me(helper)
+    try:
+        member = await _bot.get_chat_member(chat_id, helper.id)
+    except Exception:
+        return "none"
+    status = str(getattr(member, "status", "")).lower()
+    if "banned" in status:
+        return "banned"
+    return "none" if "left" in status else "member"
+
+
+async def _choose_helper(chat_id: int) -> Helper:
+    """A helper already in the group, else the least busy one that isn't banned there."""
+    ordered = sorted(_helpers, key=lambda h: (_load(h), h.index))
+    if len(ordered) == 1:
+        return ordered[0]
+    states = {h: await _member_state(chat_id, h) for h in ordered}
+    for h in ordered:
+        if states[h] == "member":
+            return h
+    for h in ordered:
+        if states[h] != "banned":
+            return h
+    return ordered[0]
 
 
 async def ensure_assistant(chat_id: int) -> str | None:
-    """Make sure the assistant account is in the group. Returns an error text or None."""
+    """Make sure a helper account is in the group. Returns an error text or None."""
+    if chat_id in _joined and chat_id in _assign:
+        return None
+    if chat_id not in _assign:
+        _assign[chat_id] = await _choose_helper(chat_id)
+        _joined.discard(chat_id)
+    helper = _assign[chat_id]
     if chat_id in _joined:
         return None
-    me = await assistant_info()
-    try:
-        member = await _bot.get_chat_member(chat_id, me.id)
-        status = str(getattr(member, "status", "")).lower()
-        if "banned" in status:
-            return f"The assistant (@{me.username}) is banned in this group. Unban it and try again."
-        if "left" not in status:
-            _joined.add(chat_id)
-            return None
-    except Exception:
-        pass  # not a member yet
+    me = await assistant_info(helper)
+    state = await _member_state(chat_id, helper)
+    if state == "banned":
+        return f"The assistant (@{me.username}) is banned in this group. Unban it and try again."
+    if state == "member":
+        _joined.add(chat_id)
+        return None
     if not config.AUTO_JOIN_ASSISTANT:
         return f"Add the assistant account @{me.username} to this group first."
     try:
         chat = await _bot.get_chat(chat_id)
         target = chat.username or await _bot.export_chat_invite_link(chat_id)
-        await _assistant.join_chat(target)
+        await helper.client.join_chat(target)
         _joined.add(chat_id)
         return None
     except Exception as e:
@@ -150,13 +263,30 @@ def _clock_resume(chat_id: int):
 
 
 # ------------------------------------------------------------------ streaming
+def _ffmpeg_input_args(src: str, seek: int) -> str:
+    """Options placed before the input: reconnect on network hiccups (stuttering/cut-off audio) and optional seek."""
+    parts = []
+    if src.startswith(("http://", "https://")):
+        parts.append("-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5")
+    if seek:
+        parts.append(f"-ss {int(seek)}")
+    return " ".join(parts)
+
+
 def _media(src: str, video: bool, seek: int = 0):
     kwargs = {}
-    if seek:
-        kwargs["ffmpeg_parameters"] = f"-ss {int(seek)}"
+    extra = _ffmpeg_input_args(src, seek)
+    if extra:
+        kwargs["ffmpeg_parameters"] = extra
     flags = getattr(MediaStream, "Flags", None)
     if flags is not None and not video:
         kwargs["video_flags"] = flags.IGNORE
+    try:  # clean, full-band audio instead of the low default quality
+        from pytgcalls.types import AudioQuality
+
+        kwargs["audio_parameters"] = getattr(AudioQuality, config.AUDIO_QUALITY.upper(), AudioQuality.HIGH)
+    except Exception:
+        pass
     if video:
         try:
             from pytgcalls.types import VideoQuality
@@ -173,7 +303,7 @@ async def _start_stream(chat_id: int, track: Track, seek: int = 0) -> bool:
         last_error[chat_id] = track.error or "source"
         return False
     try:
-        await _calls.play(chat_id, _media(src, track.video, seek))
+        await helper_for(chat_id).calls.play(chat_id, _media(src, track.video, seek))
     except Exception as e:
         name = type(e).__name__
         last_error[chat_id] = "no_vc" if "NoActiveGroupCall" in name else "play"
@@ -187,7 +317,7 @@ async def _start_stream(chat_id: int, track: Track, seek: int = 0) -> bool:
     settings = await groups_db.get_settings(chat_id)
     if settings["volume"] != 100:
         try:
-            await _calls.change_volume_call(chat_id, settings["volume"])
+            await helper_for(chat_id).calls.change_volume_call(chat_id, settings["volume"])
         except Exception:
             pass
     return True
@@ -261,7 +391,7 @@ async def restart_current(chat_id: int) -> bool:
 
 async def leave(chat_id: int):
     try:
-        await _calls.leave_call(chat_id)
+        await helper_for(chat_id).calls.leave_call(chat_id)
     except Exception:
         pass
     _reset(chat_id)
@@ -273,24 +403,27 @@ async def stop(chat_id: int):
 
 
 async def pause(chat_id: int):
-    await _calls.pause(chat_id)
+    await helper_for(chat_id).calls.pause(chat_id)
     manual_paused.add(chat_id)
     _clock_pause(chat_id)
+    _fire("state", chat_id)
 
 
 async def resume(chat_id: int):
-    await _calls.resume(chat_id)
+    await helper_for(chat_id).calls.resume(chat_id)
     manual_paused.discard(chat_id)
     auto_paused.discard(chat_id)
     _clock_resume(chat_id)
+    _fire("state", chat_id)
 
 
 async def auto_pause(chat_id: int) -> bool:
     if chat_id in manual_paused or chat_id in auto_paused:
         return False
-    await _calls.pause(chat_id)
+    await helper_for(chat_id).calls.pause(chat_id)
     auto_paused.add(chat_id)
     _clock_pause(chat_id)
+    _fire("state", chat_id)
     return True
 
 
@@ -298,9 +431,10 @@ async def auto_resume(chat_id: int) -> bool:
     """Resume after listeners came back — never overrides a manual pause."""
     if chat_id not in auto_paused or chat_id in manual_paused:
         return False
-    await _calls.resume(chat_id)
+    await helper_for(chat_id).calls.resume(chat_id)
     auto_paused.discard(chat_id)
     _clock_resume(chat_id)
+    _fire("state", chat_id)
     return True
 
 
@@ -318,7 +452,7 @@ async def seek(chat_id: int, delta: int) -> int | None:
     if target >= track.duration - 1:
         return None
     try:
-        await _calls.play(chat_id, _media(src, track.video, target))
+        await helper_for(chat_id).calls.play(chat_id, _media(src, track.video, target))
     except Exception:
         log.exception("seek failed")
         return None
@@ -326,25 +460,26 @@ async def seek(chat_id: int, delta: int) -> int | None:
     _clock_start(chat_id, target)
     if was_paused:
         try:
-            await _calls.pause(chat_id)
+            await helper_for(chat_id).calls.pause(chat_id)
             _clock_pause(chat_id)
         except Exception:
             pass
+    _fire("state", chat_id)
     return target
 
 
 async def mute(chat_id: int):
-    await _calls.mute(chat_id)
+    await helper_for(chat_id).calls.mute(chat_id)
     muted.add(chat_id)
 
 
 async def unmute(chat_id: int):
-    await _calls.unmute(chat_id)
+    await helper_for(chat_id).calls.unmute(chat_id)
     muted.discard(chat_id)
 
 
 async def set_volume(chat_id: int, volume: int):
-    await _calls.change_volume_call(chat_id, volume)
+    await helper_for(chat_id).calls.change_volume_call(chat_id, volume)
 
 
 def sources_in_use() -> set[str]:
@@ -352,4 +487,4 @@ def sources_in_use() -> set[str]:
 
 
 async def participants(chat_id: int):
-    return await _calls.get_participants(chat_id)
+    return await helper_for(chat_id).calls.get_participants(chat_id)

@@ -24,6 +24,7 @@ STRINGS = {
         "idle_stopped": "👋 The voice chat has been empty for a while, so I stopped and left to save resources.",
         "no_vc": "❌ No active voice chat. Start one in this group and try again.",
         "play_failed": "❌ Couldn't play that track. Try another source or search term.",
+        "yt_js": "⚠️ YouTube playback is not set up correctly on my server (JS runtime missing). The owner can check /diag.",
         "yt_blocked": "⚠️ YouTube is blocking my server right now, so I couldn't fetch that song. The owner has been "
                       "told. Try a JioSaavn link or another song in the meantime.",
         "unavailable": "❌ That video isn't available (private, removed, age-restricted or region-locked). Try another one.",
@@ -55,6 +56,7 @@ STRINGS = {
         "idle_stopped": "👋 वॉइस चैट काफ़ी देर से खाली थी, इसलिए संसाधन बचाने के लिए बंद कर दिया।",
         "no_vc": "❌ कोई वॉइस चैट चालू नहीं है। ग्रुप में शुरू करके फिर कोशिश करें।",
         "play_failed": "❌ यह ट्रैक नहीं चल सका। कोई और नाम या सोर्स आज़माएँ।",
+        "yt_js": "⚠️ मेरे सर्वर पर YouTube प्लेबैक ठीक से सेट नहीं है। ओनर /diag देख सकते हैं।",
         "yt_blocked": "⚠️ YouTube अभी मेरे सर्वर को ब्लॉक कर रहा है, इसलिए गाना नहीं मिल सका। ओनर को बता दिया गया है। "
                       "तब तक कोई और गाना या JioSaavn लिंक आज़माएँ।",
         "unavailable": "❌ यह वीडियो उपलब्ध नहीं है (प्राइवेट, हटाया हुआ, उम्र-सीमित या क्षेत्र-बंद)। कोई और आज़माएँ।",

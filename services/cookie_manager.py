@@ -152,3 +152,33 @@ def cleanup(path: str | None):
             os.remove(path)
         except OSError:
             pass
+
+
+LOGIN_COOKIES = ("SID", "__Secure-1PSID", "__Secure-3PSID", "LOGIN_INFO")
+
+
+def login_state(content: str) -> tuple[bool, int, int]:
+    """(has a Google login cookie, how many cookies are already expired, total) for a stored YouTube jar."""
+    names, expired, total, now = set(), 0, 0, time.time()
+    for line in content.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 7:
+            continue
+        total += 1
+        names.add(parts[5])
+        try:
+            exp = int(float(parts[4]))
+        except ValueError:
+            exp = 0
+        if exp and exp < now:
+            expired += 1
+    return bool(names & set(LOGIN_COOKIES)), expired, total
+
+
+def write_jar(content: str) -> str:
+    os.makedirs(config.CACHE_DIR, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="ck_", suffix=".txt", dir=config.CACHE_DIR)
+    with os.fdopen(fd, "w") as f:
+        f.write(content if content.startswith("#") else NETSCAPE_HEADER + content)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    return path

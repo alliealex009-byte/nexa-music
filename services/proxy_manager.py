@@ -1,4 +1,4 @@
-"""SOCKS5 proxy pool: add/remove, health checks, automatic removal of dead proxies."""
+"""Proxy pool (socks5/socks4/http): add/remove, health checks, automatic removal of dead proxies."""
 import asyncio
 import itertools
 import logging
@@ -22,15 +22,21 @@ class ProxyError(ValueError):
     pass
 
 
+SCHEMES = {"socks5": "socks5", "socks5h": "socks5", "socks4": "socks4", "socks4a": "socks4", "http": "http", "https": "http"}
+
+
 def normalize(raw: str) -> str:
-    """Accepts host:port, host:port:user:pass, user:pass@host:port, socks5(h)://... -> socks5://..."""
-    raw = (raw or "").strip()
-    if not raw:
+    """Accepts host:port, host:port:user:pass, user:pass@host:port and socks5/socks4/http URLs.
+    A trailing comment such as '  # 49ms' (as in pasted proxy lists) is ignored."""
+    raw = re.sub(r"\s+#.*$", "", (raw or "").strip()).strip()
+    if not raw or raw.startswith("#"):
         raise ProxyError("Empty proxy.")
+    scheme = "socks5"
     if "://" in raw:
         scheme, rest = raw.split("://", 1)
-        if scheme.lower() not in ("socks5", "socks5h"):
-            raise ProxyError("Only SOCKS5 proxies are supported (socks5://host:port).")
+        scheme = SCHEMES.get(scheme.lower())
+        if not scheme:
+            raise ProxyError("Unsupported proxy type (use socks5://, socks4:// or http://).")
     else:
         rest = raw
     user = password = None
@@ -51,13 +57,13 @@ def normalize(raw: str) -> str:
     auth = ""
     if user:
         auth = quote(unquote(user), safe="") + (":" + quote(unquote(password), safe="") if password else "") + "@"
-    return f"socks5://{auth}{m.group(1)}:{m.group(2)}"
+    return f"{scheme}://{auth}{m.group(1)}:{m.group(2)}"
 
 
 def mask(url: str) -> str:
     p = urlsplit(url)
     host = f"{p.hostname}:{p.port}"
-    return f"socks5://{p.username}:***@{host}" if p.username else f"socks5://{host}"
+    return f"{p.scheme}://{p.username}:***@{host}" if p.username else f"{p.scheme}://{host}"
 
 
 def for_ytdlp(url: str) -> str:
