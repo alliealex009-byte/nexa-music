@@ -98,3 +98,38 @@ async def respond(message, ctx: Ctx, text: str, rows=None, *, success: bool = Fa
     if success and ctx.silent:
         return None
     return await ui.reply(message, text, rows)
+
+
+# ------------------------------------------------------------------ owner-only commands
+def owner_cmd(func=None, *, private_only: bool = False):
+    """Owner-only command. Non-owners get a hint with their own Telegram ID in private chat (so a wrong
+    OWNER_ID in .env is easy to spot) and are ignored in groups. `private_only` is for commands that
+    handle secrets."""
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        async def wrapper(client, message):
+            import config
+
+            uid = message.from_user.id if message.from_user else None
+            is_private = message.chat.type == ChatType.PRIVATE
+            if uid is None or uid != config.OWNER_ID:
+                if is_private:
+                    await ui.reply(
+                        message,
+                        "🚫 <b>Owner only.</b>\n"
+                        f"Your Telegram ID is <code>{uid}</code>. If you are the owner, put "
+                        f"<code>OWNER_ID={uid}</code> in your .env file and restart the bot.",
+                    )
+                return
+            if private_only and not is_private:
+                return await ui.reply(message, "🔒 Use this command in a private chat with me.")
+            try:
+                await fn(client, message)
+            except Exception:
+                log.exception("owner command failed: %s", (message.text or "")[:40])
+                await ui.reply(message, "⚠️ That failed — see the bot log for details.")
+
+        return wrapper
+
+    return decorate(func) if func else decorate
