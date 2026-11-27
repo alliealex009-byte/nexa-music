@@ -30,16 +30,29 @@ assistant = Client(
     api_id=config.API_ID,
     api_hash=config.API_HASH,
     session_string=config.SESSION_STRING,
-    no_updates=True,
     in_memory=True,
 )
 
 calls = PyTgCalls(assistant)
 
 
-async def notify_owner(text: str):
+async def notify_owner(text: str, rows=None):
     if config.OWNER_ID:
-        await ui.send(config.OWNER_ID, text, sticky=True)
+        return await ui.send(config.OWNER_ID, text, rows, sticky=True)
+
+
+async def announce_start(username: str):
+    """Tell the owner the bot is up. If this fails, OWNER_ID is probably wrong (or the owner never pressed Start)."""
+    if config.OWNER_ID in (0, 123456789):
+        log.warning("OWNER_ID is not set (it is %s). Owner commands will not work: send /id to the bot and put that "
+                    "number in .env as OWNER_ID.", config.OWNER_ID)
+    mid = await notify_owner(
+        f"✅ <b>{config.BOT_NAME} is online</b> (@{username})\nOpen the owner panel to add cookies, proxies and API keys.",
+        [[ui.b("🛠 Owner Panel", "own:home", style="primary")]],
+    )
+    if not mid:
+        log.warning("Could not message OWNER_ID=%s. Open @%s, press Start, and check OWNER_ID in .env.",
+                    config.OWNER_ID, username)
 
 
 async def main():
@@ -56,6 +69,7 @@ async def main():
     player.setup(bot, assistant, calls)
     await player.assistant_info()
 
+    audio_provider.alert_hook = notify_owner
     proxy_manager.start(notify=notify_owner)
     vc_monitor.start()
     start_watchdog(bot, calls)
@@ -63,6 +77,7 @@ async def main():
     audio_provider.purge_cache()
 
     log.info("Bot started as @%s", me.username)
+    await announce_start(me.username or "")
     await idle()
 
     await botapi.close()

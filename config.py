@@ -4,6 +4,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _str(name: str, default: str = "") -> str:
+    """Env string; a value that is really a trailing comment ("# ...") counts as empty."""
+    value = os.getenv(name, default).strip()
+    return "" if value.startswith("#") else value
+
+
 def _int(name: str, default: int = 0) -> int:
     try:
         return int(os.getenv(name, default))
@@ -24,10 +30,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")  # assistant userbot (joins voice chats)
 
 OWNER_ID = _int("OWNER_ID")
-BOT_NAME = os.getenv("BOT_NAME", "AccStore Music Bot")
-SUPPORT_GROUP = os.getenv("SUPPORT_GROUP", "AccStore_official_chat")
-UPDATES_CHANNEL = os.getenv("UPDATES_CHANNEL", "accstore_official")
-WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "")  # optional URL / file_id
+BOT_NAME = os.getenv("BOT_NAME", "RIA Music")
+SUPPORT_GROUP = _str("SUPPORT_GROUP").lstrip("@")  # empty = hide the Support button
+UPDATES_CHANNEL = _str("UPDATES_CHANNEL").lstrip("@")  # empty = hide the Updates button
+DEFAULT_BANNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "welcome.jpg")
+WELCOME_IMAGE = _str("WELCOME_IMAGE") or (DEFAULT_BANNER if os.path.exists(DEFAULT_BANNER) else "")  # URL, file_id or local path
 
 DB_PATH = os.getenv("DB_PATH", "data/nexa.db")
 DATA_DIR = os.getenv("DATA_DIR", "data")
@@ -37,7 +44,9 @@ LOG_DIR = os.getenv("LOG_DIR", "logs")
 BOT_API_BASE = os.getenv("BOT_API_BASE", "https://api.telegram.org").rstrip("/")
 
 # --- JioSaavn (unofficial API; point this at your own deployment for reliability)
-SAAVN_API_BASE = os.getenv("SAAVN_API_BASE", "https://saavn.dev/api").rstrip("/")
+# One or more hosts, comma-separated; they are tried in order and the last working one is preferred.
+SAAVN_API_BASES = [b.strip().rstrip("/") for b in os.getenv("SAAVN_API_BASE", "https://saavn.sumit.co/api,https://saavn.dev/api").split(",") if b.strip()]
+SAAVN_API_BASE = SAAVN_API_BASES[0] if SAAVN_API_BASES else ""
 SAAVN_API_STYLE = os.getenv("SAAVN_API_STYLE", "dev").lower()  # dev | legacy
 SAAVN_FALLBACK = _bool("SAAVN_FALLBACK", True)  # try JioSaavn when YouTube fails
 
