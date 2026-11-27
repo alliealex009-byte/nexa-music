@@ -11,28 +11,63 @@ from keyboards.inline import help_hub, main_menu
 from services import helptext, ui
 
 
-def welcome_text(name: str) -> str:
+def welcome_text(name: str, proxy_active: bool = False) -> str:
     name = html.escape(name)
     bot_name = html.escape(config.BOT_NAME)
-    line = "⎯" * 26
-    return (
-        f"{ui.em('music', '⚡')} <b>ʜᴇʟʟᴏ {name}!</b>\n\n"
-        f"🎵 <b>ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ {bot_name}</b> 🎵\n"
-        f"{line}\n"
-        "🚀 <b>ᴛʜᴇ ᴍᴏsᴛ ᴀᴅᴠᴀɴᴄᴇᴅ & sᴇʟꜰ-ʜᴇᴀʟɪɴɢ ᴍᴜsɪᴄ ʙᴏᴛ!</b>\n\n"
-        "💿 <b>sᴇʀᴠɪᴄᴇs:</b> YouTube | Spotify | Apple Music | SoundCloud | JioSaavn\n"
-        "⚡ <b>ᴇɴᴊᴏʏ:</b> HD Playback | Video | Lyrics | Auto-recovery\n"
-        "🟢 <b>ᴘʀᴏxʏ ʙʏᴘᴀss:</b> Active &amp; Cookie-free\n\n"
-        f"💬 <b>Support Group:</b> @{config.SUPPORT_GROUP}\n"
-        f"📢 <b>Updates Channel:</b> @{config.UPDATES_CHANNEL}\n"
-        f"{line}\n"
-        "👉 <b>ᴛᴀᴘ ʙᴜᴛᴛᴏɴs ʙᴇʟᴏᴡ ᴛᴏ ɴᴀᴠɪɢᴀᴛᴇ ᴀʟʟ ꜰᴇᴀᴛᴜʀᴇs!</b>"
-    )
+    lines = [
+        f"{ui.em('music', '⚡')} <b>ʜᴇʟʟᴏ {name}!</b>",
+        "",
+        f"<blockquote><b>🎵 {bot_name}</b>\nᴛʜᴇ ꜰᴀsᴛᴇsᴛ ᴡᴀʏ ᴛᴏ sᴛʀᴇᴀᴍ ᴍᴜsɪᴄ ɪɴ ᴛᴇʟᴇɢʀᴀᴍ ᴠᴏɪᴄᴇ ᴄʜᴀᴛs</blockquote>",
+        "",
+        "⚡ <b>Blazing-fast</b> audio &amp; video streaming",
+        "💿 <b>YouTube · Spotify · Apple Music · SoundCloud · JioSaavn</b>",
+        "🎤 Lyrics · ♾ Autoplay · 🔀 Mix · 🎧 Playlists",
+        "🛡 Self-healing · pauses when the voice chat is empty",
+    ]
+    if proxy_active:
+        lines.append("🟢 <b>Proxy bypass:</b> active")
+    contacts = []
+    if config.SUPPORT_GROUP:
+        contacts.append(f"💬 Support: @{html.escape(config.SUPPORT_GROUP)}")
+    if config.UPDATES_CHANNEL:
+        contacts.append(f"📢 Updates: @{html.escape(config.UPDATES_CHANNEL)}")
+    if contacts:
+        lines += ["", "<blockquote expandable>" + "\n".join(contacts) + "</blockquote>"]
+    lines += ["", "👇 <b>Tap a button below, or add me to a group and hit</b> /play"]
+    return "\n".join(lines)
+
+
+async def welcome_async(name: str) -> str:
+    from database import credentials as cred
+
+    return welcome_text(name, proxy_active=bool(await cred.list_proxies()))
 
 
 async def send_welcome(message: Message, name: str):
-    await ui.reply(message, welcome_text(name), main_menu(ui.bot_username),
+    is_owner = bool(message.from_user and message.from_user.id == config.OWNER_ID)
+    await ui.reply(message, await welcome_async(name), main_menu(ui.bot_username, is_owner),
                    photo=config.WELCOME_IMAGE or None, sticky=True)
+
+
+async def show_home(q):
+    """Back to the welcome screen (restoring the banner if the message was converted to plain text)."""
+    text = await welcome_async(q.from_user.first_name)
+    rows = main_menu(ui.bot_username, q.from_user.id == config.OWNER_ID)
+    chat_id, mid = q.message.chat.id, q.message.id
+    if config.WELCOME_IMAGE and not getattr(q.message, "photo", None):
+        await ui.delete(chat_id, mid)
+        await ui.send(chat_id, text, rows, photo=config.WELCOME_IMAGE, sticky=True)
+    else:
+        await ui.edit_cb(q, text, rows)
+
+
+@Client.on_message(filters.command("id"))
+async def id_cmd(client: Client, message: Message):
+    uid = message.from_user.id if message.from_user else None
+    lines = [f"🆔 <b>Your ID:</b> <code>{uid}</code>", f"💬 <b>Chat ID:</b> <code>{message.chat.id}</code>"]
+    if uid == config.OWNER_ID:
+        lines.append("👑 You are the bot owner — try /owner in a private chat.")
+    await ui.reply(message, "\n".join(lines))
 
 
 @Client.on_message(filters.command("start"))

@@ -58,7 +58,8 @@ def _fail_text(ctx_or_lang, chat_id: int) -> str:
     from services.i18n import t
 
     reason = player.last_error.get(chat_id)
-    return t(lang, "no_vc" if reason == "no_vc" else "play_failed")
+    key = {"no_vc": "no_vc", "blocked": "yt_blocked", "unavailable": "unavailable"}.get(reason, "play_failed")
+    return t(lang, key)
 
 
 # ------------------------------------------------------------------ hooks used by the player

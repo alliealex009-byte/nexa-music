@@ -11,7 +11,7 @@ from handlers.play import SEARCH_CACHE, controls_for, enqueue_tracks, now_playin
 from handlers.playlists import load_into_queue, playlist_text
 from handlers.premium import premium_text
 from handlers.queue import queue_text
-from handlers.start import welcome_text
+from handlers.start import show_home
 from keyboards import inline as kb
 from keyboards import settings as skb
 from services import helptext, player, queue_manager, ui
@@ -35,7 +35,7 @@ async def menu_cb(client: Client, q: CallbackQuery):
     action = q.data.split(":")[1]
     chat_id = q.message.chat.id
     if action == "home":
-        await _edit(q, welcome_text(q.from_user.first_name), kb.main_menu(ui.bot_username))
+        await show_home(q)
     elif action == "play":
         await _edit(q, "🎵 <b>Play music</b>\nIn a group use:\n<code>/play song name or link</code>\n"
                        "Also: /mix · /vplay · /fplay · /lyrics", kb.play_menu())

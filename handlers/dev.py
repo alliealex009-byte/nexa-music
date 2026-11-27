@@ -7,17 +7,16 @@ from pyrogram import Client, filters
 from pyrogram.enums import ChatType
 
 import config
-from database import credentials as cred
-from database import groups as groups_db
-from database import users as users_db
-from services import audio_provider, logchat, player, queue_manager, sysinfo, ui, vc_monitor
+from services import admin_ops as ops
+from services import logchat, player, queue_manager, sysinfo, ui
+from utils.guards import owner_cmd
 from utils.text import esc
 
 log = logging.getLogger("dev")
-owner_any = filters.user(config.OWNER_ID)
 
 
-@Client.on_message(filters.command("ping") & owner_any)
+@Client.on_message(filters.command("ping"))
+@owner_cmd
 async def ping_cmd(client, message):
     t0 = time.monotonic()
     mid = await ui.reply(message, "🏓 Pong…")
@@ -26,56 +25,35 @@ async def ping_cmd(client, message):
         await ui.edit(message.chat.id, mid, f"🏓 Pong! <b>{ms} ms</b> · up {sysinfo.uptime()}")
 
 
-@Client.on_message(filters.command("stats") & owner_any)
+@Client.on_message(filters.command("stats"))
+@owner_cmd
 async def stats_cmd(client, message):
-    info = sysinfo.snapshot()
-    keys = await cred.list_keys()
-    usable = len(await cred.usable_keys())
-    proxies = await cred.list_proxies()
-    cookies = [c[0] for c in await cred.all_cookies()]
-    lines = [
-        "📊 <b>Stats</b>",
-        f"👤 Users: {await users_db.count_users()}   👥 Groups: {await groups_db.count_groups()}",
-        f"🎧 Active voice chats: {len(queue_manager.active_chats())}",
-        f"🔑 API keys: {usable}/{len(keys)} usable   🧦 Proxies: {len(proxies)}   🍪 Cookies: {len(cookies)}",
-        "",
-        f"🖥 CPU: {info['cpu'] if info['cpu'] is not None else 'n/a'}%   RAM: {info['ram']}",
-        f"💾 Disk: {info['disk']}   ⏱ Uptime: {info['uptime']}",
-        f"🐍 Python {info['python']} on {info['os']}",
-    ]
-    await ui.reply(message, "\n".join(lines))
+    await ui.reply(message, await ops.stats_text())
 
 
-@Client.on_message(filters.command(["av", "active"]) & owner_any)
+@Client.on_message(filters.command(["av", "active"]))
+@owner_cmd
 async def av_cmd(client, message):
-    chats = queue_manager.active_chats()
-    if not chats:
-        return await ui.reply(message, "No active voice chats.")
-    lines = [f"🎧 <b>Active voice chats ({len(chats)})</b>"]
-    for chat_id in chats[:30]:
-        try:
-            title = (await client.get_chat(chat_id)).title
-        except Exception:
-            title = str(chat_id)
-        track = queue_manager.current(chat_id)
-        state = "⏸ paused" if chat_id in player.manual_paused else "💤 auto-paused" if chat_id in player.auto_paused else "▶️"
-        n = await vc_monitor.humans_in_call(chat_id)
-        lines.append(f"• <b>{esc(title)}</b> <code>{chat_id}</code>\n  {state} {esc(track.title[:50]) if track else '—'} · 👥 {n if n is not None else '?'}")
-    await ui.reply(message, "\n".join(lines))
+    await ui.reply(message, await ops.av_text(client))
 
 
-@Client.on_message(filters.command("clearass") & owner_any)
+@Client.on_message(filters.command("clearass"))
+@owner_cmd
 async def clearass_cmd(client, message):
     """Drop cached downloads and the assistant's in-memory state. Playing calls keep their files."""
-    removed = audio_provider.purge_cache(0, keep=player.sources_in_use())
-    player._joined.clear()
-    groups_db.invalidate()
-    for chat_id in list(vc_monitor._empty_ticks):
-        vc_monitor.forget(chat_id)
-    await ui.reply(message, f"🧹 Cleared {removed} cached files and the assistant's join/settings caches.")
+    await ui.reply(message, await ops.clear_cache())
 
 
-@Client.on_message(filters.command("leaveall") & owner_any)
+@Client.on_message(filters.command(["diag", "diagnose"]))
+@owner_cmd
+async def diag_cmd(client, message):
+    progress = await ui.reply(message, "🔎 Running checks… (up to 30 seconds)")
+    text = await ops.diagnostics()
+    await (ui.edit(message.chat.id, progress, text) if progress else ui.reply(message, text))
+
+
+@Client.on_message(filters.command("leaveall"))
+@owner_cmd
 async def leaveall_cmd(client, message):
     if len(message.command) < 2 or message.command[1].lower() != "confirm":
         return await ui.reply(message, "⚠️ This makes the assistant leave <b>every</b> group/channel without an active "
@@ -101,7 +79,8 @@ async def leaveall_cmd(client, message):
     await (ui.edit(message.chat.id, progress, text) if progress else ui.reply(message, text))
 
 
-@Client.on_message(filters.command("logger") & owner_any)
+@Client.on_message(filters.command("logger"))
+@owner_cmd
 async def logger_cmd(client, message):
     arg = message.command[1].lower() if len(message.command) > 1 else ""
     if arg in ("on", "off"):

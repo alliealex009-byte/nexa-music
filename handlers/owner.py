@@ -1,31 +1,23 @@
-"""Owner-only management. Secrets (keys, cookies, proxy logins) are handled in private chat only."""
+"""Owner commands (the same tools are available as buttons in /owner). Secrets only in private chat."""
 import asyncio
 import logging
 import os
-import re
 import tempfile
 
 from pyrogram import Client, filters
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
-import config
 from database import credentials as cred
 from database import subscriptions as subs_db
 from database import users as users_db
-from services import cookie_manager, proxy_manager, ui, youtube_api
+from services import admin_ops as ops
+from services import cookie_manager, proxy_manager, ui
+from utils.guards import owner_cmd
 from utils.text import esc
 
 log = logging.getLogger("owner")
-owner_dm = filters.user(config.OWNER_ID) & filters.private
-owner_any = filters.user(config.OWNER_ID)
-KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}")
-
-
-def _scrub(text: str) -> str:
-    """Never echo secrets back, even inside error messages."""
-    text = KEY_RE.sub("AIza…", text)
-    return re.sub(r"(socks5h?://[^:/@\s]+:)[^@\s]+@", r"\1***@", text)
+_scrub = ops.scrub
 
 
 async def _forget(message: Message):
@@ -56,42 +48,25 @@ async def _read_document(client: Client, message: Message) -> str | None:
 
 
 # ------------------------------------------------------------------ YouTube API keys
-@Client.on_message(filters.command("addkey") & owner_dm)
+@Client.on_message(filters.command("addkey"))
+@owner_cmd(private_only=True)
 async def addkey_cmd(client, message):
-    keys = KEY_RE.findall(_args(message)) or _args(message).split()
+    text = _args(message)
     await _forget(message)
-    if not keys:
-        return await ui.send(message.chat.id, "Usage: <code>/addkey KEY [KEY …]</code> (your message is deleted afterwards)")
-    lines = []
-    for key in keys[:10]:
-        ok, detail = await youtube_api.validate_key(key)
-        if not ok:
-            lines.append(f"❌ …{esc(key[-4:])} — {esc(_scrub(detail))}")
-            continue
-        kid = await cred.add_key(key)
-        lines.append(f"✅ #{kid} …{esc(key[-4:])} added ({esc(detail)})" if kid else f"ℹ️ …{esc(key[-4:])} already added")
-    await ui.send(message.chat.id, "\n".join(lines), sticky=True)
+    if not text.strip():
+        return await ui.send(message.chat.id, "Usage: <code>/addkey KEY [KEY …]</code> (your message is deleted afterwards)\n"
+                                              "Or use /owner → 🔑 API Keys.")
+    await ui.send(message.chat.id, "\n".join(await ops.add_keys(text)), sticky=True)
 
 
-@Client.on_message(filters.command("keys") & owner_dm)
+@Client.on_message(filters.command("keys"))
+@owner_cmd(private_only=True)
 async def keys_cmd(client, message):
-    rows = await cred.list_keys()
-    if not rows:
-        return await ui.reply(message, "No API keys. Add one with /addkey. Without keys, search uses yt-dlp.")
-    lines = []
-    for kid, key, until, invalid in rows:
-        state = "❌ invalid" if invalid else (f"⏳ quota used, back {until[:16].replace('T', ' ')} UTC" if until and until > _now() else "✅ active")
-        lines.append(f"#{kid} …{esc(key[-4:])} — {state}")
-    await ui.reply(message, "🔑 <b>YouTube API keys</b>\n" + "\n".join(lines))
+    await ui.reply(message, await ops.keys_overview())
 
 
-def _now() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
-
-
-@Client.on_message(filters.command("rmkey") & owner_dm)
+@Client.on_message(filters.command("rmkey"))
+@owner_cmd(private_only=True)
 async def rmkey_cmd(client, message):
     arg = _args(message).strip().lower()
     if arg == "all":
@@ -103,44 +78,30 @@ async def rmkey_cmd(client, message):
 
 
 # ------------------------------------------------------------------ proxies
-@Client.on_message(filters.command("addproxy") & owner_dm)
+@Client.on_message(filters.command("addproxy"))
+@owner_cmd(private_only=True)
 async def addproxy_cmd(client, message):
-    raw = [l.strip() for l in re.split(r"[\n,]+", _args(message)) if l.strip()]
+    text = _args(message)
     await _forget(message)
-    if not raw:
+    if not text.strip():
         return await ui.send(message.chat.id, "Usage: <code>/addproxy host:port</code> · <code>host:port:user:pass</code> · "
-                                              "<code>socks5://user:pass@host:port</code> (one per line)")
-    progress = await ui.send(message.chat.id, f"🔎 Checking {len(raw[:20])} prox{'y' if len(raw) == 1 else 'ies'}…")
-    lines = []
-    for item in raw[:20]:
-        try:
-            status, masked = await proxy_manager.add(item)
-        except proxy_manager.ProxyError as e:
-            lines.append(f"❌ {esc(_scrub(str(e)))}")
-            continue
-        icon = {"ok": "✅ added", "dead": "❌ not reachable (not added)", "duplicate": "ℹ️ already added"}[status]
-        lines.append(f"{icon}: <code>{esc(masked)}</code>")
-    text = "\n".join(lines)
+                                              "<code>socks5://user:pass@host:port</code> (one per line)\nOr use /owner → 🧦 Proxies.")
+    progress = await ui.send(message.chat.id, "🔎 Checking proxies…")
+    out = "\n".join(await ops.add_proxies(text))
     if progress:
-        await ui.edit(message.chat.id, progress, text)
+        await ui.edit(message.chat.id, progress, out)
     else:
-        await ui.send(message.chat.id, text)
+        await ui.send(message.chat.id, out)
 
 
-@Client.on_message(filters.command("proxies") & owner_dm)
+@Client.on_message(filters.command("proxies"))
+@owner_cmd(private_only=True)
 async def proxies_cmd(client, message):
-    rows = await cred.list_proxies()
-    if not rows:
-        return await ui.reply(message, "No proxies. Downloads use a direct connection. Add with /addproxy.")
-    lines = []
-    for pid, url, fails, ms, checked in rows:
-        state = f"✅ {ms} ms" if fails == 0 and ms else f"⚠️ {fails} failed check(s)"
-        lines.append(f"#{pid} <code>{esc(proxy_manager.mask(url))}</code> — {state}")
-    await ui.reply(message, "🧦 <b>SOCKS5 proxies</b>\n" + "\n".join(lines)
-                   + f"\n\nChecked every {config.PROXY_CHECK_INTERVAL}s; removed after {config.PROXY_MAX_FAILS} failed checks.")
+    await ui.reply(message, await ops.proxies_overview())
 
 
-@Client.on_message(filters.command("rmproxy") & owner_dm)
+@Client.on_message(filters.command("rmproxy"))
+@owner_cmd(private_only=True)
 async def rmproxy_cmd(client, message):
     arg = _args(message).strip().lower()
     if arg == "all":
@@ -151,7 +112,8 @@ async def rmproxy_cmd(client, message):
     await ui.reply(message, "🗑 Removed." if ok else "❌ No proxy with that id.")
 
 
-@Client.on_message(filters.command("checkproxies") & owner_dm)
+@Client.on_message(filters.command("checkproxies"))
+@owner_cmd(private_only=True)
 async def checkproxies_cmd(client, message):
     if not await cred.list_proxies():
         return await ui.reply(message, "No proxies to check.")
@@ -162,14 +124,15 @@ async def checkproxies_cmd(client, message):
 
 
 # ------------------------------------------------------------------ cookies
-@Client.on_message((filters.command("setcookies") | filters.command("addcookies")) & owner_dm)
+@Client.on_message(filters.command(["setcookies", "addcookies"]))
+@owner_cmd(private_only=True)
 async def setcookies_cmd(client, message):
     args = _args(message).split(None, 1)
     help_text = (
         "Usage: <code>/setcookies youtube</code> + a cookies.txt file (attach it, or reply to it with the command).\n"
         "Services: <code>youtube</code>, <code>spotify</code>, <code>apple</code>, or <code>other &lt;site&gt;</code>.\n"
         "Spotify also accepts just the <code>sp_dc</code> value: <code>/setcookies spotify sp_dc=…</code>.\n"
-        "Cookie text over 4096 characters must be sent as a file."
+        "Cookie text over 4096 characters must be sent as a file.\nOr use /owner → 🍪 Cookies."
     )
     if not args:
         return await ui.reply(message, help_text)
@@ -182,33 +145,22 @@ async def setcookies_cmd(client, message):
         else:
             service, inline = cookie_manager.resolve_service(args[0]), (args[1] if len(args) > 1 else "")
         raw = await _read_document(client, message) or inline
-        content = cookie_manager.normalize(raw, service)
+        note = await ops.save_cookies(service, raw)
     except (cookie_manager.CookieError, ValueError) as e:
         await _forget(message)
         return await ui.send(message.chat.id, f"❌ {esc(_scrub(str(e)))}")
-    await cred.set_cookies(service, content)
     await _forget(message)
-    count, domains = cookie_manager.summarize(content)
-    note = ""
-    if service == "spotify" or service == "apple":
-        note = "\nℹ️ Used only to read Spotify/Apple link pages — never sent to other sites."
-    await ui.send(message.chat.id, f"✅ Saved <b>{esc(service)}</b> cookies: {count} cookies "
-                                   f"({esc(', '.join(domains[:4]))}).{note}\nYour message was deleted.", sticky=True)
+    await ui.send(message.chat.id, f"{note}\nYour message was deleted.", sticky=True)
 
 
-@Client.on_message(filters.command("cookies") & owner_dm)
+@Client.on_message(filters.command("cookies"))
+@owner_cmd(private_only=True)
 async def cookies_cmd(client, message):
-    rows = await cred.all_cookies()
-    if not rows:
-        return await ui.reply(message, "No cookies saved. Use /setcookies.")
-    lines = []
-    for service, content, updated in rows:
-        count, domains = cookie_manager.summarize(content)
-        lines.append(f"• <b>{esc(service)}</b> — {count} cookies, {esc(', '.join(domains[:3]))} (updated {esc(updated[:10])})")
-    await ui.reply(message, "🍪 <b>Cookies</b>\n" + "\n".join(lines))
+    await ui.reply(message, await ops.cookies_overview())
 
 
-@Client.on_message(filters.command("rmcookies") & owner_dm)
+@Client.on_message(filters.command("rmcookies"))
+@owner_cmd(private_only=True)
 async def rmcookies_cmd(client, message):
     arg = _args(message).strip()
     if not arg:
@@ -225,12 +177,14 @@ async def rmcookies_cmd(client, message):
 
 
 # ------------------------------------------------------------------ premium emoji ids
-@Client.on_message(filters.command("setemoji") & owner_dm)
+@Client.on_message(filters.command("setemoji"))
+@owner_cmd(private_only=True)
 async def setemoji_cmd(client, message):
     args = _args(message).split()
     if not args:
         return await ui.reply(message, "Usage: <code>/setemoji name</code> + one premium emoji, or "
-                                       "<code>/setemoji name emoji_id</code>\nNames: " + ", ".join(ui.EMOJI_NAMES))
+                                       "<code>/setemoji name emoji_id</code>\nNames: " + ", ".join(ui.EMOJI_NAMES)
+                                       + "\nOr use /owner → ✨ Premium Emoji.")
     name = args[0].lower()
     if name not in ui.EMOJI_NAMES:
         return await ui.reply(message, "Unknown name. Choose from: " + ", ".join(ui.EMOJI_NAMES))
@@ -250,15 +204,14 @@ async def setemoji_cmd(client, message):
                             "username on the bot). If Telegram refuses them, the bot falls back to normal buttons.")
 
 
-@Client.on_message(filters.command("emojis") & owner_dm)
+@Client.on_message(filters.command("emojis"))
+@owner_cmd(private_only=True)
 async def emojis_cmd(client, message):
-    ids = ui.emoji_ids()
-    if not ids:
-        return await ui.reply(message, "No premium emoji set. Use /setemoji.")
-    await ui.reply(message, "✨ <b>Premium emoji</b>\n" + "\n".join(f"• {k}: {ui.em(k, '▫️')} <code>{v}</code>" for k, v in sorted(ids.items())))
+    await ui.reply(message, ops.emoji_overview())
 
 
-@Client.on_message(filters.command("rmemoji") & owner_dm)
+@Client.on_message(filters.command("rmemoji"))
+@owner_cmd(private_only=True)
 async def rmemoji_cmd(client, message):
     arg = _args(message).strip().lower()
     if arg == "all":
@@ -271,7 +224,8 @@ async def rmemoji_cmd(client, message):
 
 
 # ------------------------------------------------------------------ premium + broadcast
-@Client.on_message(filters.command("grant") & owner_any)
+@Client.on_message(filters.command("grant"))
+@owner_cmd
 async def grant_cmd(client, message):
     try:
         uid, days = int(message.command[1]), int(message.command[2])
@@ -281,7 +235,8 @@ async def grant_cmd(client, message):
     await ui.reply(message, f"✅ Granted {days} days to {uid}.")
 
 
-@Client.on_message(filters.command("revoke") & owner_any)
+@Client.on_message(filters.command("revoke"))
+@owner_cmd
 async def revoke_cmd(client, message):
     try:
         uid = int(message.command[1])
@@ -291,7 +246,8 @@ async def revoke_cmd(client, message):
     await ui.reply(message, "✅ Revoked.")
 
 
-@Client.on_message(filters.command("broadcast") & owner_any)
+@Client.on_message(filters.command("broadcast"))
+@owner_cmd
 async def broadcast_cmd(client, message):
     text = _args(message)
     if not text:
