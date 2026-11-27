@@ -14,7 +14,7 @@ from handlers.queue import queue_text
 from handlers.start import show_home
 from keyboards import inline as kb
 from keyboards import settings as skb
-from services import helptext, player, queue_manager, ui
+from services import helptext, nowplaying, player, queue_manager, ui
 from utils.permissions import can_control_uid, can_play_uid, is_admin
 
 log = logging.getLogger("callbacks")
@@ -84,10 +84,13 @@ async def control_cb(client: Client, q: CallbackQuery):
         cur = queue_manager.current(chat_id)
         if not cur:
             return await q.answer("Nothing is playing.", show_alert=True)
+        if not settings["lyrics"]:
+            return await q.answer("Lyrics are turned off in this group. An admin can enable them in /settings.",
+                                  show_alert=True)
         await q.answer("Fetching lyrics…")
         return await send_lyrics(chat_id, cur.title)
     if action in ("more", "back"):
-        await ui.edit_markup(chat_id, msg_id, controls_for(chat_id, more=action == "more", settings=settings))
+        await _rerender(q, settings, more=action == "more")
         return await q.answer()
 
     if not await can_control_uid(client, chat_id, q.from_user.id, settings):
@@ -113,12 +116,12 @@ async def control_cb(client: Client, q: CallbackQuery):
             await q.answer("Can't seek here" if new is None else f"At {new // 60}:{new % 60:02d}")
         elif action in ("mute", "unmute"):
             await (player.mute if action == "mute" else player.unmute)(chat_id)
-            await ui.edit_markup(chat_id, msg_id, controls_for(chat_id, more=True, settings=settings))
+            await _rerender(q, settings)
             await q.answer("Muted" if action == "mute" else "Unmuted")
         elif action == "loop":
             nxt_mode = {"off": "track", "track": "queue", "queue": "off"}[queue_manager.loop_mode(chat_id)]
             queue_manager.set_loop(chat_id, nxt_mode)
-            await ui.edit_markup(chat_id, msg_id, controls_for(chat_id, more=True, settings=settings))
+            await _rerender(q, settings)
             await q.answer(f"Loop: {nxt_mode}")
         elif action == "shuffle":
             n = queue_manager.shuffle(chat_id)
@@ -126,13 +129,33 @@ async def control_cb(client: Client, q: CallbackQuery):
         elif action == "autoplay":
             await groups_db.set_setting(chat_id, "autoplay", not settings["autoplay"])
             settings = await groups_db.get_settings(chat_id)
-            await ui.edit_markup(chat_id, msg_id, controls_for(chat_id, more=True, settings=settings))
+            await _rerender(q, settings)
             await q.answer("Autoplay " + ("on" if settings["autoplay"] else "off"))
         else:
             await q.answer()
     except Exception:
         log.exception("control button failed")
         await q.answer("That didn't work.", show_alert=True)
+
+
+def _in_more_page(q: CallbackQuery) -> bool:
+    """Is the clicked card currently showing the 'More' page? (its buttons include Back)"""
+    try:
+        return any(b.callback_data == "ctl:back" for row in q.message.reply_markup.inline_keyboard for b in row)
+    except Exception:
+        return False
+
+
+async def _rerender(q: CallbackQuery, settings: dict, more: bool | None = None):
+    """Refresh the card's buttons (and caption, if it is the live card) after a control changed."""
+    chat_id, msg_id = q.message.chat.id, q.message.id
+    card = nowplaying.cards.get(chat_id)
+    if card and card.message_id == msg_id:
+        await nowplaying.refresh(chat_id, more=more)  # None keeps whichever page the live card is on
+    else:
+        if more is None:
+            more = _in_more_page(q)
+        await ui.edit_markup(chat_id, msg_id, controls_for(chat_id, more=more, settings=settings))
 
 
 def _short(text: str) -> str:
@@ -162,7 +185,9 @@ async def pick_cb(client: Client, q: CallbackQuery):
                                           video=kind == "vpick")
     lang = settings["language"]
     if status == "playing":
-        text = now_playing_text(track, lang)
+        await ui.delete(chat_id, q.message.id)
+        await nowplaying.post(chat_id, queue_manager.current(chat_id) or track, settings)
+        return
     elif status == "queued":
         text = queued_text(track, pos, 0, lang)
     elif status == "full":

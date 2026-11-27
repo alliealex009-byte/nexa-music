@@ -11,7 +11,7 @@ from database import subscriptions as subs_db
 from database import users as users_db
 from keyboards import owner as kb
 from services import admin_ops as ops
-from services import cookie_manager, logchat, proxy_manager, ui
+from services import cookie_manager, helpers, logchat, mongo_backup, player, proxy_manager, ui
 from utils.guards import owner_cmd
 from utils.text import esc
 
@@ -23,14 +23,17 @@ _BROADCAST: dict[int, str] = {}     # owner id -> text waiting for confirmation
 PROMPTS = {
     "addkey": "🔑 <b>Add API key</b>\nSend your YouTube Data API key (you can send several, one per line). "
               "I delete your message afterwards.",
-    "addproxy": "🧦 <b>Add proxy</b>\nSend a SOCKS5 proxy:\n<code>host:port</code>\n<code>host:port:user:pass</code>\n"
-                "<code>socks5://user:pass@host:port</code>\nOne per line for several. It is health-checked before it is saved.",
+    "addproxy": "🧦 <b>Add proxy</b>\nSend a proxy (socks5, socks4 or http):\n<code>host:port</code>\n<code>host:port:user:pass</code>\n"
+                "<code>socks5://user:pass@host:port</code>\nOne per line for many; a trailing # 49ms is ignored. Each is health-checked before saving.",
     "cookie": "🍪 <b>Add {service} cookies</b>\nSend the <b>cookies.txt file</b> (Netscape format, or a JSON export). "
               "Text over 4096 characters must be a file. I delete your message afterwards.",
     "cookie_site": "🌐 <b>Other site</b>\nType the site name (for example <code>soundcloud</code>), then I'll ask for its cookies file.",
     "emoji": "✨ <b>Premium emoji for “{name}”</b>\nSend <b>one premium emoji</b> (or its numeric id).",
     "grant": "💎 <b>Grant premium</b>\nSend: <code>user_id days</code>  (example: <code>123456789 30</code>)",
     "revoke": "➖ <b>Revoke premium</b>\nSend the user id.",
+    "addhelper": "🤖 <b>Add helper account</b>\nSend the <b>Pyrogram session string</b> of another Telegram account. "
+                 "It will be named “{bot} N”, get the ads-free bio and the logo photo (old photos are removed). "
+                 "I delete your message afterwards.",
     "broadcast": "📣 <b>Broadcast</b>\nSend the message to send to every user who started the bot (plain text).",
 }
 
@@ -45,6 +48,10 @@ async def render(page: str) -> tuple[str, list]:
         return await ops.cookies_overview(), kb.cookies_menu(await cred.all_cookies())
     if page == "emoji":
         return ops.emoji_overview(), kb.emoji_menu(ui.emoji_ids())
+    if page == "helpers":
+        return helpers.overview(), kb.helpers_menu(player.helpers(), len(player.helpers()) < config.MAX_HELPERS)
+    if page == "backup":
+        return mongo_backup.describe(), kb.backup_menu(mongo_backup.enabled())
     if page == "premium":
         return "💎 <b>Premium users</b>\nGrant or revoke premium (more playlists).", kb.premium_menu()
     return (
@@ -91,7 +98,7 @@ async def own_cb(client, q):
     if area == "home":
         PENDING.pop(uid, None)
         return await _answer(q, page("home"))
-    if area in ("keys", "proxies", "cookies", "emoji", "premium"):
+    if area in ("keys", "proxies", "cookies", "emoji", "premium", "helpers", "backup"):
         PENDING.pop(uid, None)
         return await _answer(q, page(area))
     if area == "cancel":
@@ -131,11 +138,28 @@ async def own_cb(client, q):
         elif act == "all":
             await cred.clear_proxies()
         return await _answer(q, page("proxies"), "Removed")
+    elif area == "h":
+        if act == "add":
+            return await _answer(q, _prompt(q, "addhelper", bot=esc(config.BOT_NAME)))
+        if act == "brand":
+            await q.answer("Updating profiles… (can take a minute)")
+            report = await helpers.brand_all(force=True)
+            return await page("helpers", "\n".join(esc(r) for r in report) or "Nothing to update.")
+        if act == "rm" and arg.isdigit():
+            return await page("helpers", await helpers.remove(int(arg)))
+    elif area == "bk":
+        if act == "now":
+            await q.answer("Backing up…")
+            return await page("backup", esc(await mongo_backup.backup_now(force=True)))
     elif area == "c":
         if act == "set" and arg in ("youtube", "spotify", "apple"):
             return await _answer(q, _prompt(q, "cookie", service=arg))
         if act == "other":
             return await _answer(q, _prompt(q, "cookie_site"))
+        if act == "test":
+            await q.answer("Testing… (up to 90s)")
+            await ui.edit_cb(q, "🔍 Testing your YouTube cookies against a real video…", [[kb.BACK]])
+            return await page("cookies", await ops.verify_youtube_cookies())
         if act == "rm":
             await cred.remove_cookies(arg)
         elif act == "all":
@@ -242,6 +266,12 @@ async def pending_input(client, message):
                 return await show(chat, "cookies", [f"❌ {esc(str(e))}"])
             PENDING[uid] = {"action": "cookie", "service": service}
             return await ui.send(chat, PROMPTS["cookie"].format(service=esc(service)), kb.cancel_menu())
+        if action == "addhelper":
+            session = (message.text or "").strip()
+            await _forget(message)
+            await ui.send(chat, "⏳ Logging the helper in…")
+            result = await helpers.add_from_owner(session)
+            return await show(chat, "helpers", [result])
         if action == "cookie":
             service = state["service"]
             try:

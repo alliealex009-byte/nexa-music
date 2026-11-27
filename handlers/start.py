@@ -19,10 +19,11 @@ def welcome_text(name: str, proxy_active: bool = False) -> str:
         "",
         f"<blockquote><b>🎵 {bot_name}</b>\nᴛʜᴇ ꜰᴀsᴛᴇsᴛ ᴡᴀʏ ᴛᴏ sᴛʀᴇᴀᴍ ᴍᴜsɪᴄ ɪɴ ᴛᴇʟᴇɢʀᴀᴍ ᴠᴏɪᴄᴇ ᴄʜᴀᴛs</blockquote>",
         "",
+        "🚫 <b>Always ads-free</b> · no promotion · clean UI",
         "⚡ <b>Blazing-fast</b> audio &amp; video streaming",
         "💿 <b>YouTube · Spotify · Apple Music · SoundCloud · JioSaavn</b>",
         "🎤 Lyrics · ♾ Autoplay · 🔀 Mix · 🎧 Playlists",
-        "🛡 Self-healing · pauses when the voice chat is empty",
+        "🛡 Copyright-free streaming · pauses when the voice chat is empty",
     ]
     if proxy_active:
         lines.append("🟢 <b>Proxy bypass:</b> active")

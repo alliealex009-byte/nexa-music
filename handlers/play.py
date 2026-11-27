@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -7,7 +8,7 @@ from pyrogram.types import Message
 import config
 from database import groups as groups_db
 from keyboards.inline import player_controls, search_results
-from services import logchat, music_search, player, queue_manager, ui
+from services import logchat, music_search, nowplaying, player, queue_manager, ui
 from services.models import Track
 from utils import guards
 from utils.guards import Ctx, group_cmd, query_of, with_silent
@@ -45,12 +46,7 @@ def queued_text(track: Track, pos: int, more: int, lang: str = "en") -> str:
 
 
 def controls_for(chat_id: int, more: bool = False, settings: dict | None = None):
-    return player_controls(
-        more=more,
-        loop=queue_manager.loop_mode(chat_id),
-        muted=chat_id in player.muted,
-        autoplay=bool(settings and settings.get("autoplay")),
-    )
+    return nowplaying.controls(chat_id, settings or {}, more)
 
 
 def _fail_text(ctx_or_lang, chat_id: int) -> str:
@@ -58,7 +54,7 @@ def _fail_text(ctx_or_lang, chat_id: int) -> str:
     from services.i18n import t
 
     reason = player.last_error.get(chat_id)
-    key = {"no_vc": "no_vc", "blocked": "yt_blocked", "unavailable": "unavailable"}.get(reason, "play_failed")
+    key = {"no_vc": "no_vc", "blocked": "yt_blocked", "js": "yt_js", "unavailable": "unavailable"}.get(reason, "play_failed")
     return t(lang, key)
 
 
@@ -67,7 +63,7 @@ async def _on_now_playing(chat_id: int, track: Track):
     settings = await groups_db.get_settings(chat_id)
     if settings["silent"]:
         return
-    await ui.send(chat_id, now_playing_text(track, settings["language"]), controls_for(chat_id, settings=settings))
+    await nowplaying.post(chat_id, track, settings)
     await logchat.event(f"▶️ <b>{esc(track.title)}</b> in <code>{chat_id}</code>")
 
 
@@ -82,6 +78,18 @@ async def _on_notice(chat_id: int, key: str):
     await ui.send(chat_id, t(settings["language"], key))
 
 
+async def _on_state(chat_id: int):
+    await nowplaying.refresh(chat_id)
+
+
+async def _on_ended(chat_id: int):
+    card = nowplaying.cards.get(chat_id)
+    final = f"⏹ <b>Playback ended</b>\n{esc(card.track.title)}" if card else None
+    await nowplaying.stop_live(chat_id, final=final)
+
+
+player.hooks["state"] = _on_state
+player.hooks["ended"] = _on_ended
 player.hooks["now_playing"] = _on_now_playing
 player.hooks["notice"] = _on_notice
 
@@ -163,13 +171,14 @@ async def _finish(message: Message, ctx: Ctx, progress: int | None, status: str,
             await ui.delete(chat_id, progress)
         return
     if status == "playing":
-        text = now_playing_text(first, ctx.lang)
+        if progress:
+            await ui.delete(chat_id, progress)
+        await nowplaying.post(chat_id, queue_manager.current(chat_id) or first, ctx.settings)
         if extra:
-            text += f"\n➕ +{extra} more tracks queued"
+            await ui.send(chat_id, f"➕ +{extra} more tracks queued")
     else:
-        text = queued_text(first, pos, extra, ctx.lang)
-    rows = controls_for(chat_id, settings=ctx.settings)
-    await _edit_or_send(message, progress, text, rows)
+        await _edit_or_send(message, progress, queued_text(first, pos, extra, ctx.lang),
+                            controls_for(chat_id, settings=ctx.settings))
     await logchat.event(f"🎵 <b>{esc(first.title)}</b> requested in <code>{chat_id}</code>")
 
 
@@ -197,7 +206,20 @@ async def do_play(client: Client, message: Message, ctx: Ctx, *, video=False, fo
     await groups_db.add_group(chat_id, message.chat.title or "")
     progress = await ui.reply(message, ctx.t("searching"))
 
-    err = await player.ensure_assistant(chat_id)
+    try:
+        await _play_body(client, message, ctx, progress, media, query, reply, video=video, force=force, mix=mix)
+    except asyncio.TimeoutError:
+        log.warning("play timed out in %s for %r", chat_id, query)
+        await _edit_or_send(message, progress, "⏱ That took too long (the music source is not answering). Try again, "
+                                               "or ask the owner to check /diag.")
+    except Exception:
+        log.exception("play failed in %s for %r", chat_id, query)
+        await _edit_or_send(message, progress, ctx.t("play_failed"))
+
+
+async def _play_body(client, message, ctx, progress, media, query, reply, *, video, force, mix):
+    chat_id = message.chat.id
+    err = await asyncio.wait_for(player.ensure_assistant(chat_id), 30)
     if err:
         return await _edit_or_send(message, progress, f"❌ {esc(err)}")
 
@@ -207,14 +229,16 @@ async def do_play(client: Client, message: Message, ctx: Ctx, *, video=False, fo
             return await _edit_or_send(message, progress, got)
         tracks = [got]
     elif mix:
-        tracks = await _mix_tracks(query)
+        tracks = await asyncio.wait_for(_mix_tracks(query), config.SEARCH_TIMEOUT)
     else:
-        tracks = await music_search.resolve_many(query, config.MAX_PLAYLIST_IMPORT)
+        tracks = await asyncio.wait_for(music_search.resolve_many(query, config.MAX_PLAYLIST_IMPORT),
+                                        config.SEARCH_TIMEOUT)
     if not tracks:
         return await _edit_or_send(message, progress, ctx.t("not_found"))
 
     uid, name = _requester(message)
-    status, pos, extra = await enqueue_tracks(chat_id, tracks, uid, name, video=video, force=force)
+    status, pos, extra = await asyncio.wait_for(
+        enqueue_tracks(chat_id, tracks, uid, name, video=video, force=force), config.SEARCH_TIMEOUT * 2)
     await _finish(message, ctx, progress, status, pos, extra, tracks[0])
 
 

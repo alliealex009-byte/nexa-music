@@ -1,5 +1,7 @@
 from pyrogram import Client, filters
 
+from database import groups as groups_db
+from pyrogram.enums import ChatType
 from services import lyrics, queue_manager, ui
 from utils import guards
 from utils.text import chunk, esc
@@ -23,6 +25,8 @@ async def send_lyrics(chat_id: int, query: str, reply_to: int | None = None):
 
 @Client.on_message(filters.command(guards.with_silent(guards.LYRICS)))
 async def lyrics_cmd(client, message):
+    if message.chat.type != ChatType.PRIVATE and not (await groups_db.get_settings(message.chat.id))["lyrics"]:
+        return await ui.reply(message, "🎤 Lyrics are turned off in this group. An admin can enable them in /settings.")
     query = guards.query_of(message)
     if not query:
         cur = queue_manager.current(message.chat.id)

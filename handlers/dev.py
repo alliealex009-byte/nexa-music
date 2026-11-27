@@ -15,16 +15,6 @@ from utils.text import esc
 log = logging.getLogger("dev")
 
 
-@Client.on_message(filters.command("ping"))
-@owner_cmd
-async def ping_cmd(client, message):
-    t0 = time.monotonic()
-    mid = await ui.reply(message, "🏓 Pong…")
-    ms = int((time.monotonic() - t0) * 1000)
-    if mid:
-        await ui.edit(message.chat.id, mid, f"🏓 Pong! <b>{ms} ms</b> · up {sysinfo.uptime()}")
-
-
 @Client.on_message(filters.command("stats"))
 @owner_cmd
 async def stats_cmd(client, message):
@@ -62,17 +52,19 @@ async def leaveall_cmd(client, message):
     active = set(queue_manager.active_chats())
     left = failed = 0
     try:
-        async for dialog in player._assistant.get_dialogs():
-            chat = dialog.chat
-            if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL) or chat.id in active:
-                continue
-            try:
-                await player._assistant.leave_chat(chat.id)
-                player._joined.discard(chat.id)
-                left += 1
-            except Exception:
-                failed += 1
-            await asyncio.sleep(1.2)  # stay under flood limits
+        for helper in player.helpers():
+            async for dialog in helper.client.get_dialogs():
+                chat = dialog.chat
+                if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL) or chat.id in active:
+                    continue
+                try:
+                    await helper.client.leave_chat(chat.id)
+                    player._joined.discard(chat.id)
+                    player._assign.pop(chat.id, None)
+                    left += 1
+                except Exception:
+                    failed += 1
+                await asyncio.sleep(1.2)  # stay under flood limits
     except Exception:
         log.exception("leaveall")
     text = f"✅ Left {left} chats ({failed} failed)."
