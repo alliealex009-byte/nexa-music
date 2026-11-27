@@ -34,7 +34,7 @@ def setup(bot, assistant, calls):
     global _bot, _assistant, _calls
     _bot, _assistant, _calls = bot, assistant, calls
 
-    @calls.on_update(filters.stream_end)
+    @calls.on_update(filters.stream_end())
     async def _on_end(_, update):
         await play_next(update.chat_id)
 
