@@ -1,0 +1,11 @@
+services:
+  nexa-music:
+    build: .
+    container_name: nexa-music
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/nexa.db
