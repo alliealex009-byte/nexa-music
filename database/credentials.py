@@ -9,10 +9,10 @@ def _now() -> str:
 
 
 # ----------------------------------------------------------------- helper (assistant) sessions
-async def add_helper_session(session: str) -> int | None:
+async def add_helper_session(session: str, proxy: str | None = None) -> int | None:
     async with connect() as db:
         try:
-            cur = await db.execute("INSERT INTO helper_sessions (session) VALUES (?)", (session,))
+            cur = await db.execute("INSERT INTO helper_sessions (session, proxy) VALUES (?, ?)", (session, proxy))
             await db.commit()
             return cur.lastrowid
         except Exception:  # duplicate
@@ -22,6 +22,12 @@ async def add_helper_session(session: str) -> int | None:
 async def list_helper_sessions() -> list[tuple[int, str]]:
     async with connect() as db:
         cur = await db.execute("SELECT id, session FROM helper_sessions ORDER BY id")
+        return await cur.fetchall()
+
+
+async def list_helper_rows() -> list[tuple[int, str, str | None]]:
+    async with connect() as db:
+        cur = await db.execute("SELECT id, session, proxy FROM helper_sessions ORDER BY id")
         return await cur.fetchall()
 
 

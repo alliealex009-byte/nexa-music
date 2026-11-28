@@ -102,6 +102,9 @@ async def init_db():
         for column, decl in GROUP_COLUMNS.items():
             if column not in have:
                 await db.execute(f"ALTER TABLE groups ADD COLUMN {column} {decl}")
+        cur = await db.execute("PRAGMA table_info(helper_sessions)")
+        if "proxy" not in {row[1] for row in await cur.fetchall()}:
+            await db.execute("ALTER TABLE helper_sessions ADD COLUMN proxy TEXT")
         await db.commit()
     try:  # the DB holds API keys, proxy logins and cookies
         os.chmod(config.DB_PATH, 0o600)
