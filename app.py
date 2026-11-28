@@ -77,6 +77,9 @@ async def main():
     await init_db()
     await logchat.load()
     await logchat.load_target()
+    from services import chatnames
+
+    await chatnames.load()
     from database import credentials as _cred
 
     _v = await _cred.get_kv("vplay_enabled")
@@ -108,6 +111,7 @@ async def main():
     start_watchdog(bot)
     asyncio.get_event_loop().create_task(audio_provider.purge_loop(player.sources_in_use))
     asyncio.get_event_loop().create_task(helpers.watchdog())
+    asyncio.get_event_loop().create_task(audio_provider.daily_clean_loop(player.sources_in_use))
     audio_provider.purge_cache()
 
     log.info("Bot started as @%s", me.username)

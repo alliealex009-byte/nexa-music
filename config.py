@@ -49,7 +49,7 @@ BACKUP_INTERVAL_MINUTES = _int("BACKUP_INTERVAL_MINUTES", 30)
 
 OWNER_ID = _int("OWNER_ID")
 BOT_NAME = os.getenv("BOT_NAME", "RIA Music")
-VERSION = "6.3"
+VERSION = "6.4"
 SUPPORT_GROUP = _str("SUPPORT_GROUP").lstrip("@")  # empty = hide the Support button
 UPDATES_CHANNEL = _str("UPDATES_CHANNEL").lstrip("@")  # empty = hide the Updates button
 DEFAULT_BANNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "welcome.jpg")
