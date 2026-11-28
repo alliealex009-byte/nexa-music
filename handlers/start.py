@@ -80,7 +80,7 @@ async def start_cmd(client: Client, message: Message):
     if message.chat.type == ChatType.PRIVATE:
         await users_db.add_user(user.id, user.first_name)
     else:
-        await groups_db.add_group(message.chat.id, message.chat.title or "")
+        await groups_db.add_group(message.chat.id, message.chat.title or "", groups_db.kind_of(message.chat))
     payload = message.command[1] if len(message.command) > 1 else ""
     if payload.startswith("song_") and message.chat.type == ChatType.PRIVATE:
         return await song_card(message, payload[5:])
@@ -107,14 +107,14 @@ async def song_card(message: Message, video_id: str):
 
 @Client.on_message(filters.command("help"))
 async def help_cmd(client: Client, message: Message):
-    await ui.send_rich(message.chat.id, helptext.rich_hub(), help_hub(), helptext.hub_text(), reply_to=message.id)
+    await ui.send_rich(message.chat.id, helptext.rich_hub(bool(message.from_user and message.from_user.id == config.OWNER_ID)), help_hub(bool(message.from_user and message.from_user.id == config.OWNER_ID)), helptext.hub_text(), reply_to=message.id)
 
 
 @Client.on_message(filters.new_chat_members)
 async def joined(client: Client, message: Message):
     me = await client.get_me()
     if any(u.id == me.id for u in message.new_chat_members):
-        await groups_db.add_group(message.chat.id, message.chat.title or "")
+        await groups_db.add_group(message.chat.id, message.chat.title or "", groups_db.kind_of(message.chat))
         await ui.send(
             message.chat.id,
             "🎵 <b>Thanks for adding me!</b>\nMake me an admin (delete messages + invite users), start a "

@@ -12,7 +12,7 @@ from utils.permissions import message_is_admin
 async def settings_cmd(client, message, ctx):
     if not await message_is_admin(client, message):
         return await ui.reply(message, ctx.t("admins_only"))
-    await groups_db.add_group(message.chat.id, message.chat.title or "")
+    await groups_db.add_group(message.chat.id, message.chat.title or "", groups_db.kind_of(message.chat))
     s = await groups_db.get_settings(message.chat.id)
     text, rows = kb.page("home", s)
     await ui.reply(message, text, rows, sticky=True)

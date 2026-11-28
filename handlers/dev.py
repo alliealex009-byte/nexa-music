@@ -74,10 +74,24 @@ async def leaveall_cmd(client, message):
 @Client.on_message(filters.command("logger"))
 @owner_cmd
 async def logger_cmd(client, message):
-    arg = message.command[1].lower() if len(message.command) > 1 else ""
+    args = [a.lower() for a in message.command[1:]]
+    arg = args[0] if args else ""
+    note = ""
     if arg in ("on", "off"):
         await logchat.set_enabled(arg == "on")
+    elif arg == "set" and len(args) > 1 and args[1].lstrip("-").isdigit():
+        await logchat.set_target(int(args[1]))
+        err = await logchat.test()
+        note = "\n✅ Test message sent." if not err else f"\n❌ Couldn't write there: <code>{err}</code>\nMake the bot an admin with post rights."
+        if not err:
+            await logchat.set_enabled(True)
+    elif arg == "reset":
+        await logchat.set_target(0)
+    elif arg == "test":
+        err = await logchat.test()
+        note = "\n✅ Test message sent." if not err else f"\n❌ Failed: <code>{err}</code>"
     state = "on" if logchat.enabled() else "off"
-    await ui.reply(message, f"📝 Logger is <b>{state}</b> → <code>{logchat.target()}</code>\n"
-                            "Use <code>/logger on</code> or <code>/logger off</code>. Set LOG_CHAT_ID in .env to log elsewhere "
-                            "(the bot must be able to write there).")
+    await ui.reply(message, f"📝 Logger is <b>{state}</b> → <code>{logchat.target()}</code>{note}\n"
+                            "<code>/logger on|off</code> · <code>/logger set -100123…</code> (channel id) · "
+                            "<code>/logger test</code> · <code>/logger reset</code>\n"
+                            "Or put <code>LOG_CHAT_ID=-100…</code> in .env. The bot must be an admin of the channel.")

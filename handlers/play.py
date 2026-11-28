@@ -62,7 +62,7 @@ def _fail_text(ctx_or_lang, chat_id: int) -> str:
 async def _on_now_playing(chat_id: int, track: Track):
     settings = await groups_db.get_settings(chat_id)
     await nowplaying.post(chat_id, track, settings)
-    await logchat.event(f"▶️ <b>{esc(track.title)}</b> in <code>{chat_id}</code>")
+    await logchat.event(f"▶️ <b>{esc(track.title)}</b> in {await logchat.where(chat_id)}")
 
 
 async def _on_notice(chat_id: int, key: str):
@@ -190,7 +190,7 @@ async def _finish(message: Message, ctx: Ctx, progress: int | None, status: str,
             await ui.send(chat_id, f"➕ +{extra} more tracks queued")
     else:
         await _send_queued(message, progress, first, pos, extra, ctx)
-    await logchat.event(f"🎵 <b>{esc(first.title)}</b> requested in <code>{chat_id}</code>")
+    await logchat.event(f"🎵 <b>{esc(first.title)}</b> requested in {await logchat.where(chat_id)}")
 
 
 def starts_in(chat_id: int, pos: int) -> int:
@@ -250,7 +250,7 @@ async def do_play(client: Client, message: Message, ctx: Ctx, *, video=False, fo
     if not query and not media:
         return await ui.reply(message, ctx.t("usage_play"))
 
-    await groups_db.add_group(chat_id, message.chat.title or "")
+    await groups_db.add_group(chat_id, message.chat.title or "", groups_db.kind_of(message.chat))
     progress = await ui.reply(message, ctx.t("searching"))
 
     try:

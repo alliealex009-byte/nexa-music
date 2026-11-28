@@ -9,7 +9,8 @@ from utils.text import chunk, esc
 
 async def send_lyrics(chat_id: int, query: str, reply_to: int | None = None):
     progress = await ui.send(chat_id, "🎤 Looking for lyrics…", reply_to=reply_to)
-    found = await lyrics.find(query)
+    cur = queue_manager.current(chat_id)
+    found = await lyrics.find(query, cur.duration if cur and cur.title == query else None)
     if progress:
         await ui.delete(chat_id, progress)
     if not found:
@@ -17,8 +18,8 @@ async def send_lyrics(chat_id: int, query: str, reply_to: int | None = None):
     heading, text = found
     parts = chunk(esc(text), 3500)
     for i, part in enumerate(parts[:6]):
-        head = f"🎤 <b>{esc(heading)}</b>\n\n" if i == 0 else ""
-        await ui.send(chat_id, head + part, reply_to=reply_to if i == 0 else None)
+        head = f"🎤 <b>{esc(heading)}</b>\n" if i == 0 else ""
+        await ui.send(chat_id, head + f"<blockquote expandable>{part}</blockquote>", reply_to=reply_to if i == 0 else None)
     if len(parts) > 6:
         await ui.send(chat_id, "…lyrics truncated.")
 

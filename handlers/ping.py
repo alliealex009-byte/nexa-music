@@ -1,4 +1,5 @@
 """/ping for everyone: how fast the bot answers, how long it has been up and how the voice engine is doing."""
+import asyncio
 import inspect
 import time
 
@@ -21,8 +22,29 @@ async def _call_ping(helper) -> float | None:
         if callable(value):
             value = value()
         if inspect.isawaitable(value):
-            value = await value
+            value = await asyncio.wait_for(value, 3)
         return float(value) if value is not None else None
+    except Exception:
+        return None
+
+
+async def _mtproto_rtt(client) -> float | None:
+    """Real round trip to Telegram's servers (MTProto ping), the fairest 'latency' number."""
+    try:
+        from pyrogram.raw.functions import Ping
+
+        t = time.monotonic()
+        await client.invoke(Ping(ping_id=int(t * 1000) & 0x7FFFFFFF))
+        return (time.monotonic() - t) * 1000
+    except Exception:
+        return None
+
+
+async def _api_rtt() -> float | None:
+    try:
+        t = time.monotonic()
+        await botapi.call("getMe")
+        return (time.monotonic() - t) * 1000
     except Exception:
         return None
 
@@ -30,23 +52,18 @@ async def _call_ping(helper) -> float | None:
 @Client.on_message(filters.command("ping"))
 async def ping_cmd(client, message):
     t0 = time.monotonic()
-    mid = await ui.reply(message, "🏓 Pinging…")
-    send_ms = (time.monotonic() - t0) * 1000
-    api_ms = None
-    try:
-        t1 = time.monotonic()
-        await botapi.call("getMe")
-        api_ms = (time.monotonic() - t1) * 1000
-    except Exception:
-        pass
-    pings = [(h.index, await _call_ping(h)) for h in player.helpers()]
+    # everything at once: no "Pinging…" placeholder message, no sequential waits
+    rtt, api_ms, *pings = await asyncio.gather(_mtproto_rtt(client), _api_rtt(), *[_call_ping(h) for h in player.helpers()])
+    pings = [(h.index, p) for h, p in zip(player.helpers(), pings)]
+    mid = None
+    send_ms = rtt if rtt is not None else (api_ms if api_ms is not None else (time.monotonic() - t0) * 1000)
     voice = [f"#{i} {p:.0f} ms" for i, p in pings if p is not None]
     status = "ᴏɴʟɪɴᴇ" if send_ms < 1200 else "sʟᴏᴡ"
     lines = [
         f"<blockquote>🏓 <b>ᴘᴏɴɢ!</b> {_quality(send_ms)}</blockquote>",
         "<blockquote expandable>"
         f"<b>VERSION:</b> {config.VERSION}\n"
-        f"<b>LATENCY:</b> {send_ms:.0f} ms" + (f" · API {api_ms:.0f} ms" if api_ms is not None else "") + "\n"
+        f"<b>LATENCY:</b> {send_ms:.0f} ms" + (f" · API {api_ms:.0f} ms" if api_ms is not None and rtt is not None else "") + "\n"
         + (f"<b>VOICE:</b> {' · '.join(voice)}\n" if voice else "")
         + f"<b>UPTIME:</b> {sysinfo.uptime()}\n"
         f"<b>STATUS:</b> {status} · 🎧 {len(queue_manager.active_chats())} chat(s) · 🤖 {len(player.helpers())} helper(s)",

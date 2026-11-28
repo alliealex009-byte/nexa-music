@@ -26,7 +26,7 @@ async def _playing(message, ctx) -> bool:
 async def skip_cmd(client, message, ctx):
     if not await _allowed(client, message, ctx) or not await _playing(message, ctx):
         return
-    await player.skip(message.chat.id, announce=not ctx.silent)
+    await player.skip(message.chat.id)
 
 
 @Client.on_message(filters.command(with_silent(guards.PAUSE)) & filters.group)

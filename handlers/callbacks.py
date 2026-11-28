@@ -1,5 +1,6 @@
 import logging
 
+import config
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType
 from pyrogram.types import CallbackQuery
@@ -63,10 +64,11 @@ async def menu_cb(client: Client, q: CallbackQuery):
 @Client.on_callback_query(filters.regex(r"^help:"))
 async def help_cb(client, q):
     page = q.data.split(":")[1]
+    owner = q.from_user.id == config.OWNER_ID
     if page == "home":
-        await ui.edit_cb_rich(q, helptext.rich_hub(), helptext.hub_text(), kb.help_hub())
-    elif page in helptext.PAGES:
-        await ui.edit_cb_rich(q, helptext.rich_page(page), helptext.PAGES[page], kb.help_page(page))
+        await ui.edit_cb_rich(q, helptext.rich_hub(owner), helptext.hub_text(), kb.help_hub(owner))
+    elif page in helptext.PAGES and page in helptext.pages(owner):
+        await ui.edit_cb_rich(q, helptext.rich_page(page), helptext.PAGES[page], kb.help_page(page, owner))
     await q.answer()
 
 

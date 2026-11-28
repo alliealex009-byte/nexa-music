@@ -161,7 +161,13 @@ async def own_cb(client, q):
             await q.answer("Backing up…")
             return await page("backup", esc(await mongo_backup.backup_now(force=True)))
     elif area == "c":
-        if act == "set" and arg in ("youtube", "spotify", "apple"):
+        if act == "set" and arg == "ytnew":
+            try:
+                arg = cookie_manager.next_youtube_slot(await cookie_manager.youtube_services())
+            except cookie_manager.CookieError as e:
+                return await q.answer(str(e), show_alert=True)
+            return await _answer(q, _prompt(q, "cookie", service=arg))
+        if act == "set" and (arg in ("spotify", "apple") or cookie_manager.is_youtube(arg)):
             return await _answer(q, _prompt(q, "cookie", service=arg))
         if act == "other":
             return await _answer(q, _prompt(q, "cookie_site"))
@@ -170,8 +176,8 @@ async def own_cb(client, q):
             return await page("cookies", await ops.verify_spotify_cookies())
         if act == "test":
             await q.answer("Testing… (up to 90s)")
-            await ui.edit_cb(q, "🔍 Testing your YouTube cookies against a real video…", [[kb.BACK]])
-            return await page("cookies", await ops.verify_youtube_cookies())
+            await ui.edit_cb(q, "🔍 Testing every YouTube account against a real video…", [[kb.BACK]])
+            return await page("cookies", await ops.verify_all_youtube())
         if act == "rm":
             await cred.remove_cookies(arg)
         elif act == "all":
