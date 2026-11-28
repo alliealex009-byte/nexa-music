@@ -31,16 +31,20 @@ from services import proxy_manager  # noqa: E402
 
 _main_proxy = (proxy_manager.normalize(config.HELPER_PROXIES[0])
                if config.HELPER_PROXIES and config.HELPER_PROXIES[0] != "-" else None)
-assistant = Client(
-    "nexa_assistant",
-    proxy=tg_proxy_dict(_main_proxy),
-    api_id=config.API_ID,
-    api_hash=config.API_HASH,
-    session_string=config.SESSION_STRING,
-    in_memory=True,
-)
-
-calls = PyTgCalls(assistant)
+# Helper #1 can still come from SESSION_STRING in .env, but it is optional: leave it empty and log accounts in
+# from the bot's private chat instead (/owner -> Helpers -> Add by phone number).
+assistant = None
+calls = None
+if config.SESSION_STRING:
+    assistant = Client(
+        "nexa_assistant",
+        proxy=tg_proxy_dict(_main_proxy),
+        api_id=config.API_ID,
+        api_hash=config.API_HASH,
+        session_string=config.SESSION_STRING,
+        in_memory=True,
+    )
+    calls = PyTgCalls(assistant)
 
 
 async def notify_owner(text: str, rows=None):
@@ -55,7 +59,9 @@ async def announce_start(username: str, problems: list[str] | None = None):
                     "number in .env as OWNER_ID.", config.OWNER_ID)
     mid = await notify_owner(
         f"✅ <b>{config.BOT_NAME} is online</b> (@{username}) · {len(player.helpers())} helper(s)\n"
-        "Open the owner panel to add cookies, proxies, API keys and helpers."
+        + ("" if player.helpers() else "\n⚠️ <b>No assistant account yet.</b> Open the owner panel → 🤖 Helpers → "
+                                  "📱 Add by phone number (add a proxy first).\n")
+        + "Open the owner panel to add cookies, proxies, API keys and helpers."
         + ("".join(f"\n⚠️ {p}" for p in (problems or []))),
         [[ui.b("🛠 Owner Panel", "own:home", style="primary")]],
     )
@@ -70,17 +76,24 @@ async def main():
         log.info(restored)
     await init_db()
     await logchat.load()
+    from database import credentials as _cred
+
+    _v = await _cred.get_kv("vplay_enabled")
+    if _v is not None:
+        config.ENABLE_VPLAY = _v == "1"
     await ui.load_emojis()
 
     await bot.start()
-    await assistant.start()
-    await calls.start()
+    if assistant is not None:
+        await assistant.start()
+        await calls.start()
 
     me = await bot.get_me()
     ui.setup(bot, me.username or "")
     player.setup(bot, assistant, calls)
-    player.helpers()[0].proxy = _main_proxy
-    await player.assistant_info()
+    if assistant is not None:
+        player.helpers()[0].proxy = _main_proxy
+        await player.assistant_info()
     problems = await helpers.start_extra()
     branding = await helpers.brand_all()
     for line in branding:

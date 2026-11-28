@@ -4,7 +4,7 @@ Pyrofork + py-tgcalls + yt-dlp (+Deno) + SQLite (+MongoDB backup), runs in Docke
 
 ## Setup
 1. Edit `.env` (`nano .env`). Keep comments on their own lines.
-2. Required: `API_ID`, `API_HASH`, `BOT_TOKEN`, `SESSION_STRING` (helper #1), `OWNER_ID`.
+2. Required: `API_ID`, `API_HASH`, `BOT_TOKEN`, `OWNER_ID` (SESSION_STRING is optional: log assistants in from the bot DM — /owner → Helpers → Add by phone number).
 3. `docker compose up -d --build`, then `docker compose logs -f`.
 4. Add the bot to a group as admin, start a voice chat, then `/play song`.
 
@@ -64,3 +64,15 @@ Test from the bot container: `docker compose exec nexa-music python -c "import u
 - Fixed: py-tgcalls 3.x rejected `filters.stream_end` (log: "object stream_end can't be used in 'await' expression"), so end-of-track / autoplay / queue advance never fired. Updates are now registered without filters and sorted by type.
 - If a group requires admin approval for new members and the bot has the "invite users" right, the bot approves the assistant's join request itself.
 - The now-playing card can no longer fail silently: errors are logged and a plain card is sent as a fallback; `/debug` shows card errors.
+
+## v9
+- New groups (and, once, existing ones): silent mode ON, delete commands ON, auto-delete OFF, autoplay OFF. Silent hides plain confirmations only; the player/queue cards always show.
+- Owner panel: 🍪 Cookies → Test Spotify; 🎬 Video play ON/OFF switch (disables /vplay everywhere, /play still works).
+- The player image redraws its timer/progress every `IMAGE_UPDATE_SECONDS` (default 10).
+- /help is a rich message (tables + collapsible sections) when Telegram accepts it, plain text otherwise.
+- Track title in the card links to `t.me/<bot>?start=song_<id>` instead of YouTube.
+- Join requests: the bot DMs a Verify button every time; /settings → Auto-accept joins (off by default) approves verified members.
+- Anonymous admins (sent as the group) are recognised as admins; /ping no longer shows disk.
+
+## v10
+- `SESSION_STRING` is optional. Leave it empty and log assistant accounts in from the bot's DM (`/owner` → 🤖 Helpers → 📱 Add by phone number). With no assistant the bot says so instead of failing.

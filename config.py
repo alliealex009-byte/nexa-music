@@ -70,6 +70,7 @@ SAAVN_API_STYLE = os.getenv("SAAVN_API_STYLE", "dev").lower()  # dev | legacy
 SAAVN_FALLBACK = _bool("SAAVN_FALLBACK", True)  # try JioSaavn when YouTube fails
 
 # --- Lyrics (community database, no key needed)
+IMAGE_UPDATE_SECONDS = float(os.getenv("IMAGE_UPDATE_SECONDS", "10"))  # re-render the timer in the card image (0 = off)
 LIVE_UPDATE_SECONDS = float(os.getenv("LIVE_UPDATE_SECONDS", "7"))  # now-playing progress refresh
 KARAOKE_UPDATE_SECONDS = float(os.getenv("KARAOKE_UPDATE_SECONDS", "4"))
 SEARCH_TIMEOUT = int(os.getenv("SEARCH_TIMEOUT", "45"))  # seconds before a stuck search gives up
