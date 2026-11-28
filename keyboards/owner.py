@@ -5,7 +5,7 @@ from services.ui import b
 BACK = b("⬅️ Back", "own:home", emoji="back")
 
 
-def home(logger_on: bool):
+def home(logger_on: bool, vplay_on: bool = True):
     return [
         [b("📊 Stats", "own:stats", style="primary"), b("🎧 Active VCs", "own:av", style="primary")],
         [b("🔑 API Keys", "own:keys", style="success"), b("🧦 Proxies", "own:proxies", style="success")],
@@ -14,6 +14,8 @@ def home(logger_on: bool):
         [b(f"📝 Logger: {'ON' if logger_on else 'OFF'}", "own:logger", style="success" if logger_on else "danger"),
          b("🧹 Clear cache", "own:clear")],
         [b("🤖 Helpers", "own:helpers", style="success"), b("💾 Backup", "own:backup", style="success")],
+        [b(f"🎬 Video play (/vplay): {'ON' if vplay_on else 'OFF'}", "own:vplay",
+           style="success" if vplay_on else "danger")],
         [b("🔎 Run diagnostics", "own:diag", style="primary")],
         [b("❌ Close", "close", style="danger", emoji="close")],
     ]
@@ -44,8 +46,13 @@ def cookies_menu(saved):
         [b("▶️ YouTube", "own:c:set:youtube", style="success"), b("🎵 Spotify", "own:c:set:spotify", style="success")],
         [b("🍎 Apple Music", "own:c:set:apple", style="success"), b("🌐 Other site", "own:c:other", style="primary")],
     ]
+    tests = []
     if any(sv == "youtube" for sv, *_ in saved):
-        rows.append([b("🔍 Test YouTube cookies", "own:c:test", style="primary")])
+        tests.append(b("🔍 Test YouTube", "own:c:test", style="primary"))
+    if any(sv == "spotify" for sv, *_ in saved):
+        tests.append(b("🔍 Test Spotify", "own:c:test:spotify", style="primary"))
+    if tests:
+        rows.append(tests)
     for service, *_ in saved:
         rows.append([b(f"🗑 Remove {service}"[:40], f"own:c:rm:{service}"[:64], style="danger")])
     if saved:

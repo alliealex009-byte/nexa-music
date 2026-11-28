@@ -13,6 +13,7 @@ TOGGLES = {
     "lyrics": ("🎤 Lyrics", "lyrics"),
     "karaoke": ("🎶 Karaoke mode", "karaoke"),
     "welcome": ("👋 Welcome card", "admin"),
+    "join_accept": ("🛂 Auto-accept verified join requests", "admin"),
 }
 
 
@@ -39,7 +40,8 @@ def hub(s: dict):
          b(f"🌐 {i18n.LANG_NAMES.get(s['language'], s['language'])}", "st:open:language", style="primary", emoji="language")],
         [_tog("Lyrics", "lyrics", s["lyrics"], "lyrics"),
          _tog("Karaoke mode", "karaoke", s["karaoke"], "lyrics")],
-        [_tog("Welcome card", "welcome", s["welcome"], "admin")],
+        [_tog("Welcome card", "welcome", s["welcome"], "admin"),
+         _tog("Auto-accept joins", "join_accept", s["join_accept"], "admin")],
         [b("❌ Close", "close", style="danger", emoji="close")],
     ]
     return rows
