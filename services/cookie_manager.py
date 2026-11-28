@@ -30,8 +30,64 @@ class CookieError(ValueError):
     pass
 
 
+MAX_YOUTUBE = 10
+YT_COOLDOWN = 30 * 60  # seconds a blocked YouTube account rests
+_cooldown: dict[str, float] = {}
+_rr = 0
+
+
+def base_service(service: str) -> str:
+    """'youtube:3' -> 'youtube'."""
+    return "youtube" if service == "youtube" or re.fullmatch(r"youtube:\d+", service) else service
+
+
+def is_youtube(service: str) -> bool:
+    return base_service(service) == "youtube"
+
+
+def yt_label(service: str) -> str:
+    return "youtube #1" if service == "youtube" else f"youtube #{service.split(':')[1]}"
+
+
+def next_youtube_slot(saved: list[str]) -> str:
+    """First free slot name: youtube, youtube:2, youtube:3 …"""
+    for n in range(1, MAX_YOUTUBE + 1):
+        name = "youtube" if n == 1 else f"youtube:{n}"
+        if name not in saved:
+            return name
+    raise CookieError(f"You already have {MAX_YOUTUBE} YouTube accounts. Remove one first.")
+
+
+def mark_blocked(service: str):
+    _cooldown[service] = time.time() + YT_COOLDOWN
+
+
+def mark_ok(service: str):
+    _cooldown.pop(service, None)
+
+
+def rotation(services: list[str]) -> list[str]:
+    """Order to try: round-robin start, rested accounts first, cooling ones last."""
+    global _rr
+    if not services:
+        return []
+    services = sorted(services, key=lambda s: (0 if s == "youtube" else int(s.split(":")[1])))
+    start = _rr % len(services)
+    _rr += 1
+    ordered = services[start:] + services[:start]
+    now = time.time()
+    ready = [s for s in ordered if _cooldown.get(s, 0) <= now]
+    cooling = [s for s in ordered if _cooldown.get(s, 0) > now]
+    return ready + cooling
+
+
 def resolve_service(name: str) -> str:
     key = (name or "").strip().lower()
+    if re.fullmatch(r"(youtube|yt):\d+", key):
+        n = int(key.split(":")[1])
+        if not 1 <= n <= MAX_YOUTUBE:
+            raise CookieError("Invalid YouTube slot.")
+        return "youtube" if n == 1 else f"youtube:{n}"
     if key.startswith("other:"):
         key = key[6:]
     elif key in ALIASES:
@@ -99,7 +155,7 @@ def normalize(raw: str, service: str) -> str:
             "I couldn't read any cookies. Send a Netscape cookies.txt (export it with a browser "
             "extension), a JSON export, or for Spotify just the sp_dc value."
         )
-    domains = DOMAINS.get(service)
+    domains = DOMAINS.get(base_service(service))
     if domains:
         ok = [l for l in lines if any(_domain(l).endswith(d) for d in domains)]
         if not ok:
@@ -130,11 +186,15 @@ def header_for(content: str | None) -> str:
     return "; ".join(pairs)
 
 
-async def make_jar() -> str | None:
-    """Write YouTube + other:* cookies to a private temp file for yt-dlp (None if there are none)."""
+async def youtube_services() -> list[str]:
+    return [sv for sv, *_ in await cred.all_cookies() if is_youtube(sv)]
+
+
+async def make_jar(youtube: str | None = None) -> str | None:
+    """Write ONE YouTube account (``youtube``; None = none) + other:* cookies to a private temp file (None if empty)."""
     chunks = []
     for service, content, _ in await cred.all_cookies():
-        if service == "youtube" or service.startswith("other:"):
+        if service == youtube or service.startswith("other:"):
             chunks.append("\n".join(l for l in content.splitlines() if l and not l.startswith("# Netscape")))
     if not chunks:
         return None

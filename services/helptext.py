@@ -74,6 +74,11 @@ TITLES = {
 }
 
 
+def pages(is_owner: bool = False) -> list[str]:
+    """Help sections this person should see (developer commands are for the bot owner only)."""
+    return [p for p in ORDER if p != "dev" or is_owner]
+
+
 def hub_text() -> str:
     return (
         "📚 <b>Help &amp; commands</b>\n\n"
@@ -119,10 +124,10 @@ def rich_page(page: str) -> str:
     return "".join(out)
 
 
-def rich_hub() -> str:
+def rich_hub(is_owner: bool = False) -> str:
     out = ["<h2>📚 Help &amp; commands</h2>",
            "<blockquote>Fast, ads-free music for Telegram voice chats. Open a section below or use the buttons.</blockquote>"]
-    for page in ORDER:
+    for page in pages(is_owner):
         title, rows, notes = _split(page)
         inner = (_table(rows) if rows else "") + "".join(f"<p>{n}</p>" for n in notes)
         out.append(f"<details><summary>{title}</summary>{inner}</details>")

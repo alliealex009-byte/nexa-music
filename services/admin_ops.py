@@ -104,8 +104,24 @@ async def cookies_overview() -> str:
     lines = []
     for service, content, updated in rows:
         count, domains = cookie_manager.summarize(content)
+        if cookie_manager.is_youtube(service):
+            service = cookie_manager.yt_label(service)
         lines.append(f"• <b>{esc(service)}</b> — {count} cookies, {esc(', '.join(domains[:3]))} (updated {esc(updated[:10])})")
     return "🍪 <b>Cookies</b>\n" + "\n".join(lines)
+
+
+async def verify_all_youtube() -> str:
+    """Test every saved YouTube account one by one."""
+    names = sorted(await cookie_manager.youtube_services(), key=lambda s: 1 if s == "youtube" else int(s.split(":")[1]))
+    if not names:
+        return "🍪 No YouTube cookies saved yet."
+    out = []
+    for sv in names:
+        res = await verify_youtube_cookies(await cred.get_cookies(sv))
+        if res.startswith("✅"):
+            cookie_manager.mark_ok(sv)
+        out.append(f"<b>{esc(cookie_manager.yt_label(sv))}</b>\n{res}")
+    return "\n\n".join(out)
 
 
 async def verify_youtube_cookies(content: str | None = None) -> str:
@@ -201,9 +217,13 @@ async def save_cookies(service: str, raw: str) -> str:
     if service in ("spotify", "apple"):
         note = ("\nℹ️ Used only to read Spotify/Apple link pages — never sent to other sites. "
                 "Songs themselves are always played from YouTube/JioSaavn.")
-    out = f"✅ Saved <b>{esc(service)}</b> cookies: {count} cookies ({esc(', '.join(domains[:4]))}).{note}"
-    if service == "youtube":
+    label = cookie_manager.yt_label(service) if cookie_manager.is_youtube(service) else service
+    out = f"✅ Saved <b>{esc(label)}</b> cookies: {count} cookies ({esc(', '.join(domains[:4]))}).{note}"
+    if cookie_manager.is_youtube(service):
         out += "\n\n🔍 Testing them now…\n" + await verify_youtube_cookies(content)
+        n = len(await cookie_manager.youtube_services())
+        if n > 1:
+            out += f"\n\n🔁 {n} YouTube accounts saved — they take turns, and one that gets blocked rests 30 min."
     elif service == "spotify":
         out += "\n\n🔍 Testing them now…\n" + await verify_spotify_cookies(content)
     return out
@@ -225,16 +245,31 @@ async def stats_text() -> str:
     info = sysinfo.snapshot()
     keys = await cred.list_keys()
     usable = len(await cred.usable_keys())
+    kinds = await groups_db.count_by_kind()
+    groups, channels = kinds.get("group", 0), kinds.get("channel", 0)
+    users = await users_db.count_users()
+    chats = queue_manager.active_chats()
     return "\n".join([
         "📊 <b>Stats</b>",
-        f"👤 Users: {await users_db.count_users()}   👥 Groups: {await groups_db.count_groups()}",
-        f"🎧 Active voice chats: {len(queue_manager.active_chats())}",
-        f"🔑 API keys: {usable}/{len(keys)} usable   🧦 Proxies: {len(await cred.list_proxies())}   "
-        f"🍪 Cookies: {len(await cred.all_cookies())}",
         "",
-        f"🖥 CPU: {info['cpu'] if info['cpu'] is not None else 'n/a'}%   RAM: {info['ram']}",
-        f"💾 Disk: {info['disk']}   ⏱ Uptime: {info['uptime']}",
-        f"🐍 Python {info['python']} on {info['os']}",
+        "<b>👥 Audience</b>",
+        f"├ Groups: <b>{groups}</b>",
+        f"├ Channels: <b>{channels}</b>",
+        f"├ Private users (DM): <b>{users}</b>",
+        f"└ Total chats: <b>{groups + channels + users}</b>",
+        "",
+        "<b>🎧 Playing now</b>",
+        f"└ Active voice chats: <b>{len(chats)}</b>   Helpers: <b>{len(player.helpers())}</b>",
+        "",
+        "<b>🔧 Services</b>",
+        f"├ API keys: {usable}/{len(keys)} usable",
+        f"├ Proxies: {len(await cred.list_proxies())}",
+        f"└ Cookies: {len(await cred.all_cookies())}",
+        "",
+        "<b>🖥 System</b>",
+        f"├ CPU: {info['cpu'] if info['cpu'] is not None else 'n/a'}%   RAM: {info['ram']}",
+        f"├ Disk: {info['disk']}   Uptime: {info['uptime']}",
+        f"└ Python {info['python']} on {info['os']}",
     ])
 
 
@@ -268,26 +303,26 @@ async def clear_cache() -> str:
 TEST_VIDEO = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
-async def diagnostics() -> str:
-    lines = ["🔎 <b>Diagnostics</b>"]
-    lines.append("✅ ffmpeg found" if shutil.which("ffmpeg") else "❌ ffmpeg missing (install it; the Docker image has it)")
-    for helper in player.helpers():
-        try:
-            me = await player.assistant_info(helper)
-            lines.append(f"✅ Helper #{helper.index}: @{esc(me.username or str(me.id))}")
-        except Exception as e:
-            lines.append(f"❌ Helper #{helper.index} not reachable ({esc(type(e).__name__)}) — check its session string")
-
+async def _bounded(coro, seconds: int, what: str) -> list[str]:
     try:
-        import yt_dlp.version as _v
+        return await asyncio.wait_for(coro, seconds)
+    except asyncio.TimeoutError:
+        return [f"⚠️ {what}: no answer within {seconds}s"]
+    except Exception as e:
+        return [f"⚠️ {what}: {esc(type(e).__name__)}"]
 
-        lines.append(f"ℹ️ yt-dlp {esc(_v.__version__)}")
-    except Exception:
-        pass
-    runtime = ytdlp_util.js_runtime()
-    lines.append(f"✅ JS runtime: {runtime}" if runtime else "❌ <b>No JS runtime (Deno)</b> — YouTube extraction will fail. "
-                 "Rebuild the Docker image from the latest repo.")
 
+async def _diag_helper(helper) -> list[str]:
+    try:
+        me = await asyncio.wait_for(player.assistant_info(helper), 8)
+        flag = "" if getattr(helper, "healthy", True) else " (reconnecting…)"
+        return [f"✅ Helper #{helper.index}: @{esc(me.username or str(me.id))}{flag}"]
+    except Exception as e:
+        return [f"❌ Helper #{helper.index} not reachable ({esc(type(e).__name__)}) — its connection is down; "
+                "the bot is reconnecting it and plays through other helpers meanwhile"]
+
+
+async def _diag_youtube() -> list[str]:
     def work(opts):
         import yt_dlp
 
@@ -300,26 +335,50 @@ async def diagnostics() -> str:
     started = time.monotonic()
     try:
         await ytdlp_util.run(work)
-        lines.append(f"✅ YouTube reachable ({time.monotonic() - started:.1f}s)")
+        return [f"✅ YouTube reachable ({time.monotonic() - started:.1f}s)"]
     except Exception as e:
         kind = audio_provider.classify(e)
         if kind == "blocked":
-            lines.append("❌ <b>YouTube is blocking this server</b> → add a YouTube cookie (then 🔍 Test) and/or a proxy")
-        elif kind == "js":
-            lines.append("❌ <b>yt-dlp can't solve YouTube's JS challenge</b> → Deno missing or yt-dlp outdated; rebuild the image")
-        else:
-            lines.append(f"❌ YouTube check failed: {esc(scrub(str(e))[:120])}")
-    cookies = [c[0] for c in await cred.all_cookies()]
+            return ["❌ <b>YouTube is blocking this server</b> → add a YouTube cookie (then 🔍 Test) and/or a proxy"]
+        if kind == "js":
+            return ["❌ <b>yt-dlp can't solve YouTube's JS challenge</b> → Deno missing or yt-dlp outdated; rebuild the image"]
+        return [f"❌ YouTube check failed: {esc(scrub(str(e))[:120])}"]
+
+
+async def _diag_saavn() -> list[str]:
+    found = await saavn.search("arijit singh", 1)
+    if found:
+        return [f"✅ JioSaavn working via <code>{esc(saavn._good or config.SAAVN_API_BASE)}</code>"]
+    return ["❌ <b>JioSaavn: no host answered.</b> Hosts tried: "
+            + ", ".join(f"<code>{esc(b)}</code>" for b in config.SAAVN_API_BASES)
+            + "\nSet <code>SAAVN_API_BASE</code> in .env to a working JioSaavn API (self-host one if public ones are down)."]
+
+
+async def diagnostics() -> str:
+    """Every check runs at the same time with its own time limit, so one dead helper or slow host can't stall the report."""
+    lines = ["🔎 <b>Diagnostics</b>"]
+    lines.append("✅ ffmpeg found" if shutil.which("ffmpeg") else "❌ ffmpeg missing (install it; the Docker image has it)")
+    helper_jobs = [_diag_helper(h) for h in player.helpers()]
+    yt_job = _bounded(_diag_youtube(), 40, "YouTube check")
+    saavn_job = _bounded(_diag_saavn(), 20, "JioSaavn check")
+    *helper_res, yt_res, saavn_res = await asyncio.gather(*helper_jobs, yt_job, saavn_job)
+    for r in helper_res:
+        lines += r
+    try:
+        import yt_dlp.version as _v
+
+        lines.append(f"ℹ️ yt-dlp {esc(_v.__version__)}")
+    except Exception:
+        pass
+    runtime = ytdlp_util.js_runtime()
+    lines.append(f"✅ JS runtime: {runtime}" if runtime else "❌ <b>No JS runtime (Deno)</b> — YouTube extraction will fail. "
+                 "Rebuild the Docker image from the latest repo.")
+    lines += yt_res
+    cookies = [cookie_manager.yt_label(c[0]) if cookie_manager.is_youtube(c[0]) else c[0] for c in await cred.all_cookies()]
     lines.append(f"🍪 Cookies: {esc(', '.join(cookies)) if cookies else 'none'}")
     proxies = await cred.list_proxies()
     lines.append(f"🧦 Proxies: {len(proxies)} ({sum(1 for p in proxies if p[2] == 0)} healthy)")
     keys = await cred.list_keys()
     lines.append(f"🔑 API keys: {len(await cred.usable_keys())}/{len(keys)} usable" + ("" if keys else " (search uses yt-dlp)"))
-    found = await saavn.search("arijit singh", 1)
-    if found:
-        lines.append(f"✅ JioSaavn working via <code>{esc(saavn._good or config.SAAVN_API_BASE)}</code>")
-    else:
-        lines.append("❌ <b>JioSaavn: no host answered.</b> Hosts tried: "
-                     + ", ".join(f"<code>{esc(b)}</code>" for b in config.SAAVN_API_BASES)
-                     + "\nSet <code>SAAVN_API_BASE</code> in .env to a working JioSaavn API (self-host one if public ones are down).")
+    lines += saavn_res
     return "\n".join(lines)

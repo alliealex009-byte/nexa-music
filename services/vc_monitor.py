@@ -11,9 +11,27 @@ log = logging.getLogger("vcmon")
 
 _empty_ticks: dict[int, int] = {}
 _empty_since: dict[int, float] = {}
+_mute_paused: set[int] = set()  # chats paused because the assistant was muted in the voice chat
+
+
+async def assistant_muted(chat_id: int, parts=None) -> bool | None:
+    """True if an admin muted the assistant in the voice chat (so nobody can hear the music). None = unknown."""
+    try:
+        parts = parts if parts is not None else await player.participants(chat_id)
+        me = await player.assistant_id(chat_id)
+    except Exception:
+        return None
+    for p in parts:
+        if getattr(p, "user_id", None) == me:
+            by_admin = bool(getattr(p, "muted_by_admin", False))
+            self_muted = bool(getattr(p, "muted", False)) and chat_id not in player.muted and chat_id not in player.manual_paused \
+                and chat_id not in player.auto_paused
+            return by_admin or self_muted
+    return False
 
 
 def forget(chat_id: int):
+    _mute_paused.discard(chat_id)
     _empty_ticks.pop(chat_id, None)
     _empty_since.pop(chat_id, None)
 
@@ -37,6 +55,18 @@ async def tick(now: float | None = None) -> list[tuple[int, str]]:
         forget(gone)
     for chat_id in active:
         settings = await groups_db.get_settings(chat_id)
+        muted = await assistant_muted(chat_id)
+        if muted and chat_id not in player.manual_paused:
+            if chat_id not in _mute_paused and await player.auto_pause(chat_id):
+                _mute_paused.add(chat_id)
+                actions.append((chat_id, "mute_paused"))
+                await player._notice(chat_id, "assistant_muted")
+            continue
+        if muted is False and chat_id in _mute_paused:
+            _mute_paused.discard(chat_id)
+            if await player.auto_resume(chat_id):
+                actions.append((chat_id, "mute_resumed"))
+                await player._notice(chat_id, "assistant_unmuted")
         count = await humans_in_call(chat_id)
         if count is None:
             continue

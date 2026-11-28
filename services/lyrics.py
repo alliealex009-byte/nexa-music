@@ -27,8 +27,28 @@ async def _get(path: str, params: dict):
             return await r.json(content_type=None)
 
 
-async def find(query: str) -> tuple[str, str] | None:
-    """Returns (heading, plain lyrics) or None."""
+def _tokens(text: str) -> set[str]:
+    return {t for t in re.split(r"[\s_\-|,.:;/()\[\]&+'\"!?]+", clean_title(text).lower()) if len(t) > 1}
+
+
+def _score(item: dict, want: set[str], duration: int | None) -> float:
+    """How well a result matches what was asked: its title words must appear in the request (that is what
+    separates the right song from a fuzzy neighbour), artist words and song length refine the ranking."""
+    name = _tokens(item.get("trackName", ""))
+    have = name | _tokens(item.get("artistName", ""))
+    if not want or not have:
+        return 0.0
+    cover = len(want & name) / len(name) if name else len(want & have) / len(have)
+    score = cover + 0.3 * len(want & have) / len(want)
+    if duration and item.get("duration"):
+        diff = abs(float(item["duration"]) - duration)
+        score += 0.5 if diff <= 4 else 0.25 if diff <= 10 else -0.4 if diff > 30 else 0
+    return score
+
+
+async def find(query: str, duration: int | None = None) -> tuple[str, str] | None:
+    """Returns (heading, plain lyrics) or None. The best-matching result wins (title words + song length),
+    and a result that barely resembles the song is rejected instead of showing the wrong lyrics."""
     query = clean_title(query)
     if not query:
         return None
@@ -37,11 +57,13 @@ async def find(query: str) -> tuple[str, str] | None:
     except Exception as e:
         log.info("lyrics search failed: %s", type(e).__name__)
         return None
-    for item in results:
-        text = (item.get("plainLyrics") or "").strip()
-        if text:
-            return f"{item.get('artistName', '')} - {item.get('trackName', '')}".strip(" -"), text
-    return None
+    want = _tokens(query)
+    ranked = sorted((r for r in results if (r.get("plainLyrics") or "").strip()),
+                    key=lambda r: _score(r, want, duration), reverse=True)
+    if not ranked or _score(ranked[0], want, duration) < 0.6:
+        return None
+    best = ranked[0]
+    return f"{best.get('artistName', '')} - {best.get('trackName', '')}".strip(" -"), best["plainLyrics"].strip()
 
 
 _LRC = re.compile(r"\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]")
@@ -81,13 +103,9 @@ async def find_synced(query: str, duration: int = 0) -> list[tuple[float, str]]:
     except Exception as e:
         log.info("synced lyrics search failed: %s", type(e).__name__)
         return []
-    best = None
-    for item in results:
-        if not (item.get("syncedLyrics") or "").strip():
-            continue
-        gap = abs((item.get("duration") or 0) - duration) if duration else 0
-        if best is None or gap < best[0]:
-            best = (gap, item["syncedLyrics"])
-        if gap <= 3:
-            break
-    return parse_lrc(best[1]) if best else []
+    want = _tokens(query)
+    ranked = sorted((r for r in results if (r.get("syncedLyrics") or "").strip()),
+                    key=lambda r: _score(r, want, duration or None), reverse=True)
+    if not ranked or _score(ranked[0], want, duration or None) < 0.6:
+        return []
+    return parse_lrc(ranked[0]["syncedLyrics"])

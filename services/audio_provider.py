@@ -1,5 +1,6 @@
 """Turns a Track into something ffmpeg can read: a direct URL or a cached local file."""
 import asyncio
+import contextvars
 import logging
 import os
 import re
@@ -60,15 +61,46 @@ def _fmt(video: bool) -> str:
     if video:
         h = config.VIDEO_MAX_HEIGHT
         return f"best[height<={h}][ext=mp4]/best[height<={h}]/best"
-    return "bestaudio/best"
+    # AAC/m4a (~128k) is the smallest good stream: fewer bytes = faster start
+    return "bestaudio[ext=m4a]/bestaudio/best"
+
+
+# async callback(percent, speed_bps, eta) set by the player while a track loads
+progress_cb: contextvars.ContextVar = contextvars.ContextVar("progress_cb", default=None)
+
+
+def _progress_hook():
+    """yt-dlp progress hook that forwards to the player's callback (thread-safe, throttled)."""
+    cb = progress_cb.get()
+    if cb is None:
+        return None
+    loop = asyncio.get_running_loop()
+    last = [0.0]
+
+    def hook(d):
+        if d.get("status") != "downloading":
+            return
+        now = time.monotonic()
+        if now - last[0] < 1.5:
+            return
+        last[0] = now
+        total = d.get("total_bytes") or d.get("total_bytes_estimate")
+        pct = int((d.get("downloaded_bytes") or 0) * 100 / total) if total else 0
+        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(cb(min(pct, 99), d.get("speed"), d.get("eta"))))
+    return hook
 
 
 def _download_work(url: str, video: bool, track: Track | None = None):
+    hook = _progress_hook()
+
     def work(opts):
         os.makedirs(config.CACHE_DIR, exist_ok=True)
         o = {**opts, "format": _fmt(video), "noplaylist": True,
              "outtmpl": os.path.join(config.CACHE_DIR, "%(id)s.%(ext)s"),
-             "match_filter": _filter(), "continuedl": True}
+             "match_filter": _filter(), "continuedl": True,
+             "concurrent_fragment_downloads": 4, "http_chunk_size": 10485760}
+        if hook:
+            o["progress_hooks"] = [hook]
         with yt_dlp.YoutubeDL(o) as ydl:
             info = ydl.extract_info(url, download=True)
             if not info:
@@ -116,20 +148,26 @@ async def _url_playable(url: str) -> bool:
         return True  # can't tell: let ffmpeg try
 
 
+_direct_fails = 0
+
+
 async def _youtube_source(track: Track) -> str | None:
+    global _direct_fails
     # stream URLs are locked to the IP that requested them, so with proxies in use the file is
     # downloaded through the proxy and played from disk. Without proxies, stream the URL directly.
     use_proxy = config.YTDLP_USE_PROXY and bool(await proxy_manager.pick())
     try:
-        if use_proxy or track.video:
+        if use_proxy or track.video or _direct_fails >= 2:
             path, _ = await ytdlp_util.run(_download_work(track.url, track.video, track))
             return path if os.path.exists(path) else None
         url, _ = await ytdlp_util.run(_extract_work(track.url, False, track), use_proxy=False)
         if url and not await _url_playable(url):
             # a stream URL that answers 403/404 gives a silent call ("assistant joined, no sound"): download instead
+            _direct_fails += 1  # after 2 misses go straight to download (saves a wasted extraction)
             log.info("direct stream URL not playable; downloading %s", track.url)
             path, _ = await ytdlp_util.run(_download_work(track.url, False, track))
             return path if os.path.exists(path) else None
+        _direct_fails = 0
         return url
     except Exception as e:
         track.error = classify(e)

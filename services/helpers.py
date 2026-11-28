@@ -285,3 +285,36 @@ async def _finish_login(uid: int) -> str:
         await _drop_login(uid)
     await asyncio.sleep(3)
     return await add_from_owner(session)
+
+
+async def watchdog(interval: int = 45):
+    """Notice helper accounts whose Telegram connection died (endless "Connection lost" / socket.send errors),
+    stop routing chats to them and try to reconnect. Without this a dead helper makes every /play time out."""
+    while True:
+        await asyncio.sleep(interval)
+        for h in list(player.helpers()):
+            try:
+                await asyncio.wait_for(h.client.get_me(), 12)
+                if not h.healthy:
+                    log.info("helper #%s is reachable again", h.index)
+                h.healthy, h.fails = True, 0
+                continue
+            except Exception as e:
+                h.fails += 1
+                log.warning("helper #%s health check failed (%s) x%s", h.index, type(e).__name__, h.fails)
+            if h.fails >= 2:
+                if h.healthy:
+                    h.healthy = False
+                    for chat in [c for c, x in player._assign.items() if x is h]:
+                        player._assign.pop(chat, None)  # next /play picks a healthy helper
+                        player._joined.discard(chat)
+                if h.fails in (2, 6, 12):  # reconnect now, then again every few minutes
+                    try:
+                        await asyncio.wait_for(h.client.stop(), 20)
+                    except Exception:
+                        pass
+                    try:
+                        await asyncio.wait_for(h.client.start(), 40)
+                        log.info("helper #%s reconnected", h.index)
+                    except Exception as e:
+                        log.warning("helper #%s reconnect failed: %s", h.index, type(e).__name__)

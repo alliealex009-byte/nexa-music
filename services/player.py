@@ -32,6 +32,8 @@ class Helper:
     source: str = "env"  # env | db
     db_id: int | None = None
     proxy: str | None = None  # the Telegram proxy this account always connects through
+    healthy: bool = True  # False while its Telegram connection is dead (watchdog)
+    fails: int = 0
 
 
 _helpers: list[Helper] = []
@@ -84,7 +86,11 @@ NO_HELPER_TEXT = ("No assistant account is set up yet. The bot owner can add one
 
 
 def helper_for(chat_id: int) -> Helper:
-    return _assign.get(chat_id) or _helpers[0]
+    h = _assign.get(chat_id)
+    if h is not None and h.healthy:
+        return h
+    alive = [x for x in _helpers if x.healthy]
+    return h or (alive or _helpers)[0]
 
 
 def _load(helper: Helper) -> int:
@@ -255,7 +261,7 @@ async def _member_state(chat_id: int, helper: Helper) -> str:
 
 async def _choose_helper(chat_id: int) -> Helper:
     """A helper already in the group, else the least busy one that isn't banned there."""
-    ordered = sorted(_helpers, key=lambda h: (_load(h), h.index))
+    ordered = sorted(_helpers, key=lambda h: (not h.healthy, _load(h), h.index))
     if len(ordered) == 1:
         return ordered[0]
     states = {h: await _member_state(chat_id, h) for h in ordered}
@@ -384,7 +390,14 @@ def _media(src: str, video: bool, seek: int = 0):
 
 
 async def _start_stream(chat_id: int, track: Track, seek: int = 0, status: bool = True) -> bool:
-    src = await audio_provider.get_source(track)
+    async def _progress(pct, speed, eta):
+        await _status(chat_id, f"dl:{pct}:{int(speed or 0)}:{int(eta or 0)}")
+
+    token = audio_provider.progress_cb.set(_progress if status else None)
+    try:
+        src = await audio_provider.get_source(track)
+    finally:
+        audio_provider.progress_cb.reset(token)
     if not src:
         last_error[chat_id] = track.error or "source"
         return False

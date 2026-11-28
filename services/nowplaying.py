@@ -100,7 +100,21 @@ def song_link(track: Track) -> str:
     return esc(track.title)
 
 
+def _bar(pct: int, n: int = 10) -> str:
+    filled = max(0, min(n, round(pct / 100 * n)))
+    return "▰" * filled + "▱" * (n - filled)
+
+
 def status_text(key: str) -> str:
+    if key.startswith("dl:"):
+        try:
+            _, pct, speed, eta = key.split(":")
+            pct, speed, eta = int(pct), int(speed), int(eta)
+        except ValueError:
+            return "ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴀᴜᴅɪᴏ ..."
+        extra = ([f"{speed / 1048576:.1f} MB/s"] if speed else []) + ([f"{eta}s left"] if eta else [])
+        tail = ("  ·  " + " · ".join(extra)) if extra else ""
+        return f"ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴀᴜᴅɪᴏ ...\n{_bar(pct)} {pct}%{tail}"
     return {
         "downloading": "ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴀᴜᴅɪᴏ ...",
         "starting": "sᴛᴀʀᴛɪɴɢ sᴛʀᴇᴀᴍ ...",

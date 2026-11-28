@@ -22,7 +22,62 @@ _cache: dict[str, tuple[float, bytes]] = {}
 _session: aiohttp.ClientSession | None = None
 
 
-def _font(size: int, bold: bool = False):
+_SCRIPT_FONTS = [  # (first, last code point, font file names to look for)
+    (0x0900, 0x0DFF, ("NotoSansDevanagari-Bold.ttf", "NotoSansDevanagari-Regular.ttf")),  # Hindi, Bengali, Tamil...
+    (0x0600, 0x06FF, ("NotoSansArabic-Bold.ttf", "NotoSansArabic-Regular.ttf")),
+    (0x0E00, 0x0E7F, ("NotoSansThai-Bold.ttf", "NotoSansThai-Regular.ttf")),
+    (0x3000, 0x9FFF, ("NotoSansCJK-Bold.ttc", "NotoSansCJK-Regular.ttc")),
+    (0xAC00, 0xD7AF, ("NotoSansCJK-Bold.ttc", "NotoSansCJK-Regular.ttc")),
+]
+_FONT_DIRS = (FONT_DIR, "/usr/share/fonts/truetype/noto", "/usr/share/fonts/opentype/noto",
+              "/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/noto")
+_layout = None
+
+
+def _load(path: str, size: int):
+    global _layout
+    if _layout is None:
+        try:
+            from PIL import features
+
+            _layout = ImageFont.Layout.RAQM if features.check("raqm") else ImageFont.Layout.BASIC
+        except Exception:
+            _layout = ImageFont.Layout.BASIC
+    try:
+        return ImageFont.truetype(path, size, layout_engine=_layout)
+    except Exception:
+        return ImageFont.truetype(path, size)
+
+
+def _find(names) -> str | None:
+    for name in names:
+        for base in _FONT_DIRS:
+            path = os.path.join(base, name)
+            if os.path.exists(path):
+                return path
+    return None
+
+
+def _script_font(text: str, bold: bool) -> str | None:
+    """A font that really has the glyphs: Hindi etc. would otherwise show as empty boxes in Inter."""
+    for ch in text:
+        cp = ord(ch)
+        for lo, hi, names in _SCRIPT_FONTS:
+            if lo <= cp <= hi:
+                path = _find(names if bold else names[::-1])
+                if path:
+                    return path
+    return None
+
+
+def _font(size: int, bold: bool = False, text: str = ""):
+    if text:
+        path = _script_font(text, bold)
+        if path:
+            try:
+                return _load(path, size)
+            except Exception:
+                pass
     for name in ("Inter-Bold.otf" if bold else "Inter-Regular.otf", "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"):
         for base in (FONT_DIR, "/usr/share/fonts/truetype/dejavu"):
             path = os.path.join(base, name)
@@ -90,11 +145,11 @@ def _rounded(img, size: int, radius: int):
 
 def _fit_text(draw, text: str, font_fn, max_w: int, size: int, bold=True, min_size=30):
     while size > min_size:
-        f = font_fn(size, bold)
+        f = font_fn(size, bold, text)
         if draw.textlength(text, font=f) <= max_w:
             return text, f
         size -= 4
-    f = font_fn(min_size, bold)
+    f = font_fn(min_size, bold, text)
     while text and draw.textlength(text + "…", font=f) > max_w:
         text = text[:-1]
     return text + "…", f
@@ -148,7 +203,8 @@ def render_player(cover: bytes | None, title: str, subtitle: str, duration: int,
         d.text((x, by + 30), _clock(position), font=_font(28), fill=(220, 220, 230))
         end = _clock(duration) if duration else "LIVE"
         d.text((W - 70 - d.textlength(end, font=_font(28)), by + 30), end, font=_font(28), fill=(220, 220, 230))
-        d.text((x, 600), "RIA MUSIC", font=_font(26, True), fill=(255, 255, 255, 120))
+        d.rounded_rectangle((x, 586, x + 8, 640), 4, fill=ACCENT)
+        d.text((x + 24, 584), "RIA MUSIC", font=_font(46, True), fill=(255, 255, 255))
         return _jpeg(bg)
     except Exception:
         log.exception("render_player")
