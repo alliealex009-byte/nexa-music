@@ -84,8 +84,9 @@ def confirm_broadcast(count: int):
 def helpers_menu(helpers, can_add: bool):
     rows = []
     if can_add:
-        rows.append([b("➕ Add helper", "own:h:add", style="success")])
-    rows.append([b("🎨 Re-brand all (name, bio, photo)", "own:h:brand", style="primary")])
+        rows.append([b("📱 Add by phone number", "own:h:phone", style="success"),
+                     b("🔑 Add session string", "own:h:add", style="primary")])
+    rows.append([b("🎨 Set names/bio/photo (slow & careful)", "own:h:brand", style="primary")])
     for h in helpers:
         if h.source == "db":
             rows.append([b(f"🗑 Remove helper #{h.index}", f"own:h:rm:{h.index}", style="danger")])
