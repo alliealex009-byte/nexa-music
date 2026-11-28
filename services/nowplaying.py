@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 import config
 from database import groups as groups_db
-from services import botapi, lyrics, player, queue_manager, ui
+from services import botapi, cardimg, lyrics, player, queue_manager, ui
 from services.models import Track
 from utils.text import esc, fmt_clock, strip_html
 
@@ -30,6 +30,7 @@ class Card:
     lines: list = field(default_factory=list)
     lines_loaded: bool = False
     more: bool = False  # showing the "More" button page
+    status: str | None = None  # e.g. "downloading audio…" while the next track loads
 
 
 cards: dict[int, Card] = {}
@@ -46,6 +47,15 @@ def progress_bar(position: int, duration: int, width: int = BAR_WIDTH) -> str:
     return f"{fmt_clock(position)} {track} {fmt_clock(duration)}"
 
 
+def button_bar(position: int, duration: int, width: int = 8) -> str:
+    """'0:19 ▬▬▭▭▭▭▭▭ 3:04' for the progress button."""
+    if not duration:
+        return f"🔴 LIVE  {fmt_clock(position)}"
+    position = max(0, min(position, duration))
+    filled = min(width, int(position / duration * width))
+    return f"{fmt_clock(position)} {'▬' * filled}{'▭' * (width - filled)} {fmt_clock(duration)}"
+
+
 def thumbnail_for(track: Track) -> str:
     """Image URL for the card: the track's own thumbnail, a YouTube still, or the welcome banner."""
     if track.thumbnail.startswith("http"):
@@ -57,30 +67,38 @@ def thumbnail_for(track: Track) -> str:
 
 
 def caption(chat_id: int, track: Track, settings: dict, lines: list | None = None, lang: str = "en") -> str:
-    from services.i18n import t
-
     paused = chat_id in player.manual_paused or chat_id in player.auto_paused
     pos = player.position(chat_id)
-    head = ("⏸ <b>Paused</b>" if paused else f"{ui.em('play', '▶️')} <b>{t(lang, 'now_playing')}</b>")
+    head = "ᴘᴀᴜsᴇᴅ" if paused else "sᴛʀᴇᴀᴍɪɴɢ ɪɴ ᴠᴄ"
+    icon = "⏸" if paused else ui.em("play", "▶️")
     name = f'<a href="{esc(track.url)}">{esc(track.title)}</a>' if track.url.startswith("http") else esc(track.title)
     extra = " • 🎬 Video" if track.video else ""
-    lines_out = [head, f"<b>{name}</b>", "", f"<code>{progress_bar(pos, track.duration)}</code>"]
-    lines_out.append(f"👤 {esc(track.requested_name or '—')}{extra}"
-                     f"   ♾ Autoplay {'on' if settings.get('autoplay') else 'off'}")
+    dur = fmt_clock(track.duration) if track.duration else "LIVE"
+    body = [f"<b>TRACK:</b> {name}{extra}", f"<b>DURATION:</b> {dur}",
+            f"<b>REQUESTED BY:</b> {esc(track.requested_name or '—')}"]
     if settings.get("karaoke") and lines:
         words = lyrics.line_at(lines, pos + 0.5)
         if words:
-            lines_out.append(f"\n🎤 <i>{esc(words)}</i>")
-    text = "\n".join(lines_out)
+            body.append(f"🎤 <i>{esc(words)}</i>")
+    text = f"<blockquote>{icon} <b>{head}</b></blockquote>\n<blockquote expandable>" + "\n".join(body) + "</blockquote>"
     # a photo caption holds 1024 visible characters; titles are the only unbounded part
     if len(strip_html(text)) > 1000:
         text = text.replace(esc(track.title), esc(track.title[:80]) + "…")
     return text
 
 
-def controls(chat_id: int, settings: dict, more: bool = False):
+def status_text(key: str) -> str:
+    return {
+        "downloading": "ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴀᴜᴅɪᴏ ...",
+        "starting": "sᴛᴀʀᴛɪɴɢ sᴛʀᴇᴀᴍ ...",
+        "searching": "sᴇᴀʀᴄʜɪɴɢ ...",
+    }.get(key, key)
+
+
+def controls(chat_id: int, settings: dict, more: bool = False, track: Track | None = None):
     from keyboards.inline import player_controls
 
+    track = track or queue_manager.current(chat_id)
     return player_controls(
         more=more,
         loop=queue_manager.loop_mode(chat_id),
@@ -88,6 +106,7 @@ def controls(chat_id: int, settings: dict, more: bool = False):
         autoplay=bool(settings.get("autoplay")),
         paused=chat_id in player.manual_paused or chat_id in player.auto_paused,
         lyrics=bool(settings.get("lyrics")),
+        bar=button_bar(player.position(chat_id), track.duration) if track else None,
     )
 
 
@@ -97,10 +116,18 @@ async def post(chat_id: int, track: Track, settings: dict | None = None) -> int 
     settings = settings or await groups_db.get_settings(chat_id)
     await stop_live(chat_id, delete=True)
     text = caption(chat_id, track, settings, lang=settings.get("language", "en"))
-    rows = controls(chat_id, settings)
+    rows = controls(chat_id, settings, track=track)
     photo = thumbnail_for(track)
-    mid = await ui.send(chat_id, text, rows, photo=photo or None, sticky=True)
-    has_photo = bool(photo)
+    mid, has_photo = None, bool(photo)
+    cover = await cardimg.fetch(photo) if photo else None
+    img = await cardimg.render(cardimg.render_player, cover, track.title,
+                               f"Requested by {track.requested_name or '—'}", track.duration,
+                               fallback=await cardimg.fetch(config.WELCOME_IMAGE)) if cover or not photo else None
+    if img:
+        mid = await ui.send(chat_id, text, rows, photo_bytes=img, sticky=True)
+        has_photo = True
+    if mid is None:
+        mid = await ui.send(chat_id, text, rows, photo=photo or None, sticky=True)
     if mid is None and photo:  # Telegram couldn't fetch the image: fall back to a text card
         mid = await ui.send(chat_id, text, rows, sticky=True)
         has_photo = False
@@ -124,6 +151,21 @@ async def stop_live(chat_id: int, delete: bool = False, final: str | None = None
         await ui.edit(chat_id, card.message_id, final, None, caption=card.has_photo)
 
 
+async def show_status(chat_id: int, key: str):
+    """Swap the live card's text for e.g. 'downloading audio…' while the next track loads."""
+    card = cards.get(chat_id)
+    if not card:
+        return False
+    card.status = status_text(key)
+    await _edit(chat_id, card, {})
+    return True
+
+
+async def drop(chat_id: int):
+    """Remove the card (the next track could not be loaded)."""
+    await stop_live(chat_id, delete=True)
+
+
 async def refresh(chat_id: int, more: bool | None = None):
     """Re-render the card right now (after pause/resume/seek/autoplay...)."""
     card = cards.get(chat_id)
@@ -137,8 +179,11 @@ async def refresh(chat_id: int, more: bool | None = None):
 
 async def _edit(chat_id: int, card: Card, settings: dict) -> bool:
     more = card.more
-    text = caption(chat_id, card.track, settings, card.lines, settings.get("language", "en"))
-    markup_key = (text, more, controls_key(chat_id, settings))
+    if card.status:
+        text, rows = f"<blockquote>{card.status}</blockquote>", None
+    else:
+        text, rows = caption(chat_id, card.track, settings, card.lines, settings.get("language", "en")), "controls"
+    markup_key = (text, more, controls_key(chat_id, settings), button_bar(player.position(chat_id), card.track.duration))
     if markup_key == card.last:
         return True
     params = {"chat_id": chat_id, "message_id": card.message_id, "parse_mode": "HTML"}
@@ -148,7 +193,7 @@ async def _edit(chat_id: int, card: Card, settings: dict) -> bool:
     else:
         params.update(text=text, link_preview_options={"is_disabled": True})
     try:
-        await ui._post(method, params, controls(chat_id, settings, more))
+        await ui._post(method, params, controls(chat_id, settings, more, card.track) if rows else None)
     except botapi.BotApiError as e:
         desc = e.description.lower()
         if "not modified" in desc:
@@ -177,7 +222,7 @@ def interval(settings: dict) -> float:
 
 async def _live(chat_id: int, card: Card):
     try:
-        while cards.get(chat_id) is card and queue_manager.current(chat_id) is card.track:
+        while cards.get(chat_id) is card and (queue_manager.current(chat_id) is card.track or card.status):
             settings = await groups_db.get_settings(chat_id)
             if settings.get("karaoke") and not card.lines_loaded:
                 card.lines_loaded = True

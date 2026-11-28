@@ -100,6 +100,22 @@ def _extract_work(url: str, video: bool, track: Track | None = None):
     return work
 
 
+STREAM_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/124.0 Safari/537.36")
+
+
+async def _url_playable(url: str) -> bool:
+    """Cheap check (first byte only) that ffmpeg will really be able to read this stream URL."""
+    import aiohttp
+
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as sess:
+            async with sess.get(url, headers={"Range": "bytes=0-1", "User-Agent": STREAM_UA}) as r:
+                return r.status in (200, 206)
+    except Exception:
+        return True  # can't tell: let ffmpeg try
+
+
 async def _youtube_source(track: Track) -> str | None:
     # stream URLs are locked to the IP that requested them, so with proxies in use the file is
     # downloaded through the proxy and played from disk. Without proxies, stream the URL directly.
@@ -109,6 +125,11 @@ async def _youtube_source(track: Track) -> str | None:
             path, _ = await ytdlp_util.run(_download_work(track.url, track.video, track))
             return path if os.path.exists(path) else None
         url, _ = await ytdlp_util.run(_extract_work(track.url, False, track), use_proxy=False)
+        if url and not await _url_playable(url):
+            # a stream URL that answers 403/404 gives a silent call ("assistant joined, no sound"): download instead
+            log.info("direct stream URL not playable; downloading %s", track.url)
+            path, _ = await ytdlp_util.run(_download_work(track.url, False, track))
+            return path if os.path.exists(path) else None
         return url
     except Exception as e:
         track.error = classify(e)
@@ -134,8 +155,33 @@ async def _saavn_fallback(track: Track) -> str | None:
     return None
 
 
+_warm: dict[str, tuple[float, str]] = {}  # track url -> (when, source) resolved ahead of time
+_warming: set[str] = set()
+
+
+async def prefetch(track: Track):
+    """Resolve the next track's audio while the current one plays, so Skip / auto-advance start instantly."""
+    key = track.url
+    if not key or track.source not in ("youtube",) or key in _warm or key in _warming:
+        return
+    _warming.add(key)
+    try:
+        src = await get_source(track)
+        if src:
+            _warm[key] = (time.time(), src)
+            for k in [k for k, (t, _) in _warm.items() if time.time() - t > 1800]:
+                _warm.pop(k, None)
+    except Exception:
+        pass
+    finally:
+        _warming.discard(key)
+
+
 async def get_source(track: Track) -> str | None:
     """Returns a URL or local path for ffmpeg, or None if the track can't be played."""
+    hit = _warm.pop(track.url, None) if track.url else None
+    if hit and time.time() - hit[0] < 1800 and (hit[1].startswith("http") or os.path.exists(hit[1])):
+        return hit[1]
     if track.source == "file":
         return track.stream_url if os.path.exists(track.stream_url) else None
     if track.source == "saavn":

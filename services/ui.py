@@ -143,13 +143,18 @@ async def _post(method: str, params: dict, rows, files: dict | None = None):
 
 
 async def send(chat_id: int, text: str, rows=None, *, reply_to: int | None = None, photo: str | None = None,
-               sticky: bool = False) -> int | None:
+               sticky: bool = False, photo_bytes: bytes | None = None) -> int | None:
     """Send a message. Returns its id (None if it could not be sent at all)."""
     params: dict = {"chat_id": chat_id, "parse_mode": "HTML"}
     files = None
-    if photo and len(strip_html(text)) > CAPTION_LIMIT:
-        photo = None  # too long for a caption: send as a plain message
-    if photo:
+    if (photo or photo_bytes) and len(strip_html(text)) > CAPTION_LIMIT:
+        photo = photo_bytes = None  # too long for a caption: send as a plain message
+    if photo_bytes:
+        method = "sendPhoto"
+        params.update(caption=text)
+        files = {"photo": ("card.jpg", photo_bytes, "image/jpeg")}
+        photo = None
+    elif photo:
         method = "sendPhoto"
         params.update(caption=text)
         if os.path.exists(photo):  # local banner: upload once, reuse the file_id afterwards
@@ -168,7 +173,7 @@ async def send(chat_id: int, text: str, rows=None, *, reply_to: int | None = Non
     try:
         res = await _post(method, params, rows, files)
         mid = res["message_id"]
-        if files and res.get("photo"):
+        if files and photo and res.get("photo"):
             _photo_ids[photo] = res["photo"][-1]["file_id"]
     except Exception as e:
         log.info("raw send failed (%s); using fallback", e)

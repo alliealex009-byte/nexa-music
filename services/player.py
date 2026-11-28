@@ -85,10 +85,22 @@ def _load(helper: Helper) -> int:
     return sum(1 for h in _assign.values() if h is helper)
 
 
+async def _on_stream_end(update):
+    chat_id = update.chat_id
+    # Switching tracks with calls.play() makes the library report the OLD stream as ended.
+    # Without this guard that stray event skips the new song too ("skip not working").
+    if chat_id in _switching or time.monotonic() - _started_at.get(chat_id, 0) < END_GRACE:
+        log.info("ignoring stray stream_end in %s", chat_id)
+        return
+    if queue_manager.current(chat_id) is None:
+        return
+    await play_next(chat_id)
+
+
 def _wire(calls):
     @calls.on_update(filters.stream_end)
     async def _on_end(_, update):
-        await play_next(update.chat_id)
+        await _on_stream_end(update)
 
     try:  # voice chat closed / assistant removed -> drop the session
         from pytgcalls.types import ChatUpdate
@@ -129,6 +141,49 @@ async def _safe(fn, chat_id: int):
         await fn(chat_id)
     except Exception:
         log.exception("ui hook")
+
+
+END_GRACE = 4.0  # seconds after a stream starts during which "stream ended" is ignored
+_switching: set[int] = set()
+_started_at: dict[int, float] = {}
+_locks: dict[int, asyncio.Lock] = {}
+_ALIASES = {
+    "pause": ("pause", "pause_stream"),
+    "resume": ("resume", "resume_stream"),
+    "mute": ("mute", "mute_stream"),
+    "unmute": ("unmute", "unmute_stream"),
+    "leave": ("leave_call", "leave_group_call", "leave"),
+    "volume": ("change_volume_call", "change_volume"),
+}
+
+
+def _lock(chat_id: int) -> asyncio.Lock:
+    return _locks.setdefault(chat_id, asyncio.Lock())
+
+
+async def _call(chat_id: int, action: str, *args) -> bool:
+    """Call a py-tgcalls method by any of its known names; log (never hide) failures."""
+    calls = helper_for(chat_id).calls
+    last = None
+    for name in _ALIASES[action]:
+        fn = getattr(calls, name, None)
+        if fn is None:
+            continue
+        try:
+            await fn(chat_id, *args)
+            return True
+        except Exception as e:
+            last = e
+            log.warning("%s(%s) failed in %s: %s: %s", name, args, chat_id, type(e).__name__, e)
+            break
+    if last is None:
+        log.error("no py-tgcalls method for %s", action)
+    errors.append((time.time(), chat_id, action, repr(last)))
+    del errors[:-30]
+    return False
+
+
+errors: list[tuple[float, int, str, str]] = []
 
 
 def _reset(chat_id: int):
@@ -268,6 +323,7 @@ def _ffmpeg_input_args(src: str, seek: int) -> str:
     parts = []
     if src.startswith(("http://", "https://")):
         parts.append("-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5")
+        parts.append("-user_agent Mozilla/5.0")
     if seek:
         parts.append(f"-ss {int(seek)}")
     return " ".join(parts)
@@ -297,18 +353,28 @@ def _media(src: str, video: bool, seek: int = 0):
     return MediaStream(src, **kwargs)
 
 
-async def _start_stream(chat_id: int, track: Track, seek: int = 0) -> bool:
+async def _start_stream(chat_id: int, track: Track, seek: int = 0, status: bool = True) -> bool:
     src = await audio_provider.get_source(track)
     if not src:
         last_error[chat_id] = track.error or "source"
         return False
+    if status:
+        await _status(chat_id, "starting")
+    _switching.add(chat_id)
     try:
-        await helper_for(chat_id).calls.play(chat_id, _media(src, track.video, seek))
-    except Exception as e:
-        name = type(e).__name__
-        last_error[chat_id] = "no_vc" if "NoActiveGroupCall" in name else "play"
-        log.warning("play failed in %s: %s", chat_id, name)
-        return False
+        try:
+            await helper_for(chat_id).calls.play(chat_id, _media(src, track.video, seek))
+        except Exception as e:
+            name = type(e).__name__
+            last_error[chat_id] = "no_vc" if "NoActiveGroupCall" in name else "play"
+            log.warning("play failed in %s: %s: %s", chat_id, name, e)
+            errors.append((time.time(), chat_id, "play", repr(e)))
+            del errors[:-30]
+            return False
+        _started_at[chat_id] = time.monotonic()
+    finally:
+        # keep ignoring events for a moment: the old stream's "ended" arrives late
+        asyncio.get_running_loop().call_later(1.5, _switching.discard, chat_id)
     _source[chat_id] = src
     manual_paused.discard(chat_id)
     auto_paused.discard(chat_id)
@@ -316,10 +382,10 @@ async def _start_stream(chat_id: int, track: Track, seek: int = 0) -> bool:
     _clock_start(chat_id, seek)
     settings = await groups_db.get_settings(chat_id)
     if settings["volume"] != 100:
-        try:
-            await helper_for(chat_id).calls.change_volume_call(chat_id, settings["volume"])
-        except Exception:
-            pass
+        await _call(chat_id, "volume", settings["volume"])
+    ahead = queue_manager.upcoming(chat_id)
+    if ahead:
+        asyncio.get_running_loop().create_task(audio_provider.prefetch(ahead[0]))
     return True
 
 
@@ -351,6 +417,20 @@ async def play_now(chat_id: int, tracks: list[Track]) -> tuple[str, int]:
 
 
 async def play_next(chat_id: int, skipped: bool = False, announce: bool = True) -> Track | None:
+    async with _lock(chat_id):
+        return await _play_next(chat_id, skipped, announce)
+
+
+async def _status(chat_id: int, key: str):
+    fn = hooks.get("status")
+    if fn:
+        try:
+            await fn(chat_id, key)
+        except Exception:
+            log.exception("status hook")
+
+
+async def _play_next(chat_id: int, skipped: bool, announce: bool) -> Track | None:
     last = queue_manager.current(chat_id)
     queue_manager.finish_current(chat_id, skipped)
     tried_autoplay = False
@@ -370,7 +450,9 @@ async def play_next(chat_id: int, skipped: bool = False, announce: bool = True) 
             if announce:
                 await _notice(chat_id, "queue_finished")
             return None
-        if await _start_stream(chat_id, nxt):
+        if announce:
+            await _status(chat_id, "downloading")
+        if await _start_stream(chat_id, nxt, status=announce):
             fn = hooks.get("now_playing")
             if announce and fn:
                 try:
@@ -378,6 +460,8 @@ async def play_next(chat_id: int, skipped: bool = False, announce: bool = True) 
                 except Exception:
                     log.exception("now_playing hook")
             return nxt
+        if announce:
+            await _status(chat_id, "clear")
         await _notice(chat_id, f"skip_failed:{nxt.title}")
 
 
@@ -390,10 +474,12 @@ async def restart_current(chat_id: int) -> bool:
 
 
 async def leave(chat_id: int):
+    _switching.add(chat_id)
     try:
-        await helper_for(chat_id).calls.leave_call(chat_id)
-    except Exception:
-        pass
+        await _call(chat_id, "leave")
+    finally:
+        _started_at.pop(chat_id, None)
+        asyncio.get_running_loop().call_later(2, _switching.discard, chat_id)
     _reset(chat_id)
 
 
@@ -402,25 +488,30 @@ async def stop(chat_id: int):
     await leave(chat_id)
 
 
-async def pause(chat_id: int):
-    await helper_for(chat_id).calls.pause(chat_id)
+async def pause(chat_id: int) -> bool:
+    if not await _call(chat_id, "pause"):
+        return False
     manual_paused.add(chat_id)
     _clock_pause(chat_id)
     _fire("state", chat_id)
+    return True
 
 
-async def resume(chat_id: int):
-    await helper_for(chat_id).calls.resume(chat_id)
+async def resume(chat_id: int) -> bool:
+    if not await _call(chat_id, "resume"):
+        return False
     manual_paused.discard(chat_id)
     auto_paused.discard(chat_id)
     _clock_resume(chat_id)
     _fire("state", chat_id)
+    return True
 
 
 async def auto_pause(chat_id: int) -> bool:
     if chat_id in manual_paused or chat_id in auto_paused:
         return False
-    await helper_for(chat_id).calls.pause(chat_id)
+    if not await _call(chat_id, "pause"):
+        return False
     auto_paused.add(chat_id)
     _clock_pause(chat_id)
     _fire("state", chat_id)
@@ -431,7 +522,8 @@ async def auto_resume(chat_id: int) -> bool:
     """Resume after listeners came back — never overrides a manual pause."""
     if chat_id not in auto_paused or chat_id in manual_paused:
         return False
-    await helper_for(chat_id).calls.resume(chat_id)
+    if not await _call(chat_id, "resume"):
+        return False
     auto_paused.discard(chat_id)
     _clock_resume(chat_id)
     _fire("state", chat_id)
@@ -451,35 +543,40 @@ async def seek(chat_id: int, delta: int) -> int | None:
     target = max(0, position(chat_id) + delta)
     if target >= track.duration - 1:
         return None
+    _switching.add(chat_id)
     try:
         await helper_for(chat_id).calls.play(chat_id, _media(src, track.video, target))
+        _started_at[chat_id] = time.monotonic()
     except Exception:
         log.exception("seek failed")
         return None
+    finally:
+        asyncio.get_running_loop().call_later(1.5, _switching.discard, chat_id)
     was_paused = chat_id in manual_paused or chat_id in auto_paused
     _clock_start(chat_id, target)
     if was_paused:
-        try:
-            await helper_for(chat_id).calls.pause(chat_id)
+        if await _call(chat_id, "pause"):
             _clock_pause(chat_id)
-        except Exception:
-            pass
     _fire("state", chat_id)
     return target
 
 
-async def mute(chat_id: int):
-    await helper_for(chat_id).calls.mute(chat_id)
-    muted.add(chat_id)
+async def mute(chat_id: int) -> bool:
+    ok = await _call(chat_id, "mute")
+    if ok:
+        muted.add(chat_id)
+    return ok
 
 
-async def unmute(chat_id: int):
-    await helper_for(chat_id).calls.unmute(chat_id)
-    muted.discard(chat_id)
+async def unmute(chat_id: int) -> bool:
+    ok = await _call(chat_id, "unmute")
+    if ok:
+        muted.discard(chat_id)
+    return ok
 
 
-async def set_volume(chat_id: int, volume: int):
-    await helper_for(chat_id).calls.change_volume_call(chat_id, volume)
+async def set_volume(chat_id: int, volume: int) -> bool:
+    return await _call(chat_id, "volume", volume)
 
 
 def sources_in_use() -> set[str]:
