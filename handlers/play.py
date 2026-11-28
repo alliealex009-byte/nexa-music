@@ -62,6 +62,9 @@ def _fail_text(ctx_or_lang, chat_id: int) -> str:
 async def _on_now_playing(chat_id: int, track: Track):
     settings = await groups_db.get_settings(chat_id)
     await nowplaying.post(chat_id, track, settings)
+    if track.queued_mid:  # the "queued #02" card is obsolete once the song plays
+        mid, track.queued_mid = track.queued_mid, 0
+        await ui.delete(chat_id, mid)
     await logchat.event(f"▶️ <b>{esc(track.title)}</b> in {await logchat.where(chat_id)}")
 
 
@@ -223,6 +226,7 @@ async def _send_queued(message, progress, first, pos, extra, ctx):
                                in_line, eta, await cardimg.fetch(config.WELCOME_IMAGE))
     mid = await ui.send(chat_id, text, rows, photo_bytes=img) if img else None
     if mid:
+        first.queued_mid = mid
         if progress:
             await ui.delete(chat_id, progress)
         return

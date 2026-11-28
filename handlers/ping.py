@@ -58,17 +58,19 @@ async def ping_cmd(client, message):
     mid = None
     send_ms = rtt if rtt is not None else (api_ms if api_ms is not None else (time.monotonic() - t0) * 1000)
     voice = [f"#{i} {p:.0f} ms" for i, p in pings if p is not None]
+    is_owner = bool(message.from_user and message.from_user.id == config.OWNER_ID)
     status = "ᴏɴʟɪɴᴇ" if send_ms < 1200 else "sʟᴏᴡ"
     lines = [
         f"<blockquote>🏓 <b>ᴘᴏɴɢ!</b> {_quality(send_ms)}</blockquote>",
         "<blockquote expandable>"
         f"<b>VERSION:</b> {config.VERSION}\n"
         f"<b>LATENCY:</b> {send_ms:.0f} ms" + (f" · API {api_ms:.0f} ms" if api_ms is not None and rtt is not None else "") + "\n"
-        + (f"<b>VOICE:</b> {' · '.join(voice)}\n" if voice else "")
+        + (f"<b>VOICE:</b> {' · '.join(voice)}\n" if voice and is_owner else "")
         + f"<b>UPTIME:</b> {sysinfo.uptime()}\n"
-        f"<b>STATUS:</b> {status} · 🎧 {len(queue_manager.active_chats())} chat(s) · 🤖 {len(player.helpers())} helper(s)",
+        f"<b>STATUS:</b> {status} · 🎧 {len(queue_manager.active_chats())} chat(s)"
+        + (f" · 🤖 {len(player.helpers())} helper(s)" if is_owner else ""),
     ]
-    if message.from_user and message.from_user.id == config.OWNER_ID:
+    if is_owner:
         snap = sysinfo.snapshot()
         cpu = f"{snap['cpu']:.0f}%" if snap.get("cpu") is not None else "n/a"
         lines[-1] += f"\n<b>SERVER:</b> CPU {cpu} · RAM {snap['ram']}"
