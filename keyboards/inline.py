@@ -9,12 +9,9 @@ def main_menu(bot_username: str = "", is_owner: bool = False):
         rows.append([b("✦ ADD ME TO YOUR GROUP ✦", url=f"https://t.me/{bot_username}?startgroup=true&admin=delete_messages+invite_users+manage_video_chats",
                        style="primary", emoji="add")])
     rows += [
-        [b("🎵 Play Music", "menu:play", style="success", emoji="play"),
-         b("🔎 Search", "menu:search", style="primary", emoji="search")],
         [b("📋 Queue", "menu:queue", style="primary", emoji="queue"),
          b("🎧 Playlists", "menu:playlists", style="success", emoji="playlist")],
-        [b("⚙️ Settings", "menu:settings", style="primary", emoji="settings"),
-         b("💎 Premium", "menu:premium", style="success", emoji="premium")],
+        [b("💎 Premium", "menu:premium", style="success", emoji="premium")],
     ]
     links = []
     if config.SUPPORT_GROUP:
@@ -42,9 +39,9 @@ def play_menu():
     ]
 
 
-def help_hub():
+def help_hub(is_owner: bool = False):
     rows, row = [], []
-    for page in helptext.ORDER:
+    for page in helptext.pages(is_owner):
         row.append(b(helptext.TITLES[page], f"help:{page}", style="primary"))
         if len(row) == 2:
             rows.append(row)
@@ -55,8 +52,8 @@ def help_hub():
     return rows
 
 
-def help_page(page: str):
-    siblings = [p for p in helptext.ORDER if p != page]
+def help_page(page: str, is_owner: bool = False):
+    siblings = [p for p in helptext.pages(is_owner) if p != page]
     rows, row = [], []
     for p in siblings:
         row.append(b(helptext.TITLES[p], f"help:{p}"))

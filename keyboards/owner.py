@@ -47,14 +47,17 @@ def cookies_menu(saved):
         [b("🍎 Apple Music", "own:c:set:apple", style="success"), b("🌐 Other site", "own:c:other", style="primary")],
     ]
     tests = []
-    if any(sv == "youtube" for sv, *_ in saved):
+    yts = [sv for sv, *_ in saved if sv == "youtube" or sv.startswith("youtube:")]
+    if yts:
+        rows.insert(1, [b(f"➕ Add another YouTube ({len(yts)} saved)", "own:c:set:ytnew", style="success")])
         tests.append(b("🔍 Test YouTube", "own:c:test", style="primary"))
     if any(sv == "spotify" for sv, *_ in saved):
         tests.append(b("🔍 Test Spotify", "own:c:test:spotify", style="primary"))
     if tests:
         rows.append(tests)
     for service, *_ in saved:
-        rows.append([b(f"🗑 Remove {service}"[:40], f"own:c:rm:{service}"[:64], style="danger")])
+        label = "youtube #1" if service == "youtube" else ("youtube #" + service.split(":")[1] if service.startswith("youtube:") else service)
+        rows.append([b(f"🗑 Remove {label}"[:40], f"own:c:rm:{service}"[:64], style="danger")])
     if saved:
         rows.append([b("🗑 Remove all", "own:c:all", style="danger")])
     rows.append([BACK])
