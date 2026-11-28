@@ -63,6 +63,12 @@ async def add_group(chat_id: int, title: str, kind: str = "group"):
         await db.execute("UPDATE groups SET kind = ? WHERE chat_id = ? AND (kind IS NULL OR kind != ?)", (kind, chat_id, kind))
         await db.commit()
     invalidate(chat_id)
+    try:
+        from services import chatnames
+
+        chatnames.remember(chat_id, title)
+    except Exception:
+        pass
 
 
 async def get_settings(chat_id: int) -> dict:
