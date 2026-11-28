@@ -32,8 +32,10 @@ PROMPTS = {
     "grant": "💎 <b>Grant premium</b>\nSend: <code>user_id days</code>  (example: <code>123456789 30</code>)",
     "revoke": "➖ <b>Revoke premium</b>\nSend the user id.",
     "addhelper": "🤖 <b>Add helper account</b>\nSend the <b>Pyrogram session string</b> of another Telegram account. "
-                 "It will be named “{bot} N”, get the ads-free bio and the logo photo (old photos are removed). "
-                 "I delete your message afterwards.",
+                 "It connects through its own proxy (add proxies first). Names/bio/photo are only changed when you press the "
+                 "Set names button. I delete your message afterwards.",
+    "helperphone": "📱 <b>Add helper by phone</b>\nSend the account's phone number with country code "
+                   "(e.g. <code>+1 555 123 4567</code>). The login goes through this account's own proxy.",
     "broadcast": "📣 <b>Broadcast</b>\nSend the message to send to every user who started the bot (plain text).",
 }
 
@@ -103,6 +105,7 @@ async def own_cb(client, q):
         return await _answer(q, page(area))
     if area == "cancel":
         PENDING.pop(uid, None)
+        await helpers.login_cancel(uid)
         _BROADCAST.pop(uid, None)
         return await _answer(q, page("home"), "Cancelled")
     if area == "stats":
@@ -141,6 +144,8 @@ async def own_cb(client, q):
     elif area == "h":
         if act == "add":
             return await _answer(q, _prompt(q, "addhelper", bot=esc(config.BOT_NAME)))
+        if act == "phone":
+            return await _answer(q, _prompt(q, "helperphone"))
         if act == "brand":
             await q.answer("Updating profiles… (can take a minute)")
             report = await helpers.brand_all(force=True)
@@ -271,6 +276,30 @@ async def pending_input(client, message):
             await _forget(message)
             await ui.send(chat, "⏳ Logging the helper in…")
             result = await helpers.add_from_owner(session)
+            return await show(chat, "helpers", [result])
+        if action == "helperphone":
+            await _forget(message)
+            note = await ui.send(chat, "⏳ Asking Telegram for the login code…")
+            result = await helpers.login_begin(uid, text)
+            if note:
+                await ui.delete(chat, note)
+            if result != "OK":
+                return await show(chat, "helpers", [result])
+            PENDING[uid] = {"action": "helpercode"}
+            return await ui.send(chat, "📨 A code was sent to that account in Telegram.\n<b>Type it with spaces or dashes</b> "
+                                 "(e.g. <code>1 2 3 4 5</code>) — Telegram cancels the login if the code is sent as one plain number.",
+                                 kb.cancel_menu())
+        if action in ("helpercode", "helperpass"):
+            await _forget(message)
+            fn = helpers.login_code if action == "helpercode" else helpers.login_password
+            result = await fn(uid, text)
+            if result == "PASSWORD":
+                PENDING[uid] = {"action": "helperpass"}
+                return await ui.send(chat, "🔐 This account has two-step verification. Send its password "
+                                     "(I delete your message).", kb.cancel_menu())
+            if result.startswith("RETRY:"):
+                PENDING[uid] = state
+                return await ui.send(chat, result[6:], kb.cancel_menu())
             return await show(chat, "helpers", [result])
         if action == "cookie":
             service = state["service"]
