@@ -4,6 +4,7 @@ One card per chat. It is a photo message (the song's thumbnail) whose caption is
 while the song plays. A new song replaces the card; stopping or finishing ends it.
 """
 import asyncio
+import time
 import logging
 import re
 from dataclasses import dataclass, field
@@ -112,7 +113,21 @@ def controls(chat_id: int, settings: dict, more: bool = False, track: Track | No
 
 # ------------------------------------------------------------------ lifecycle
 async def post(chat_id: int, track: Track, settings: dict | None = None) -> int | None:
-    """Send a fresh card (replacing the old one) and start its live updates."""
+    """Send a fresh card (replacing the old one) and start its live updates. Never raises: if anything in the
+    fancy path breaks, a plain text card is sent instead so the user always sees what is playing."""
+    try:
+        return await _post_card(chat_id, track, settings)
+    except Exception as e:
+        log.exception("now-playing card failed")
+        player.errors.append((time.time(), chat_id, "card", repr(e)))
+        try:
+            return await ui.send(chat_id, f"▶️ <b>{esc(track.title)}</b>\nRequested by {esc(track.requested_name or '—')}",
+                                 sticky=True)
+        except Exception:
+            return None
+
+
+async def _post_card(chat_id: int, track: Track, settings: dict | None = None) -> int | None:
     settings = settings or await groups_db.get_settings(chat_id)
     await stop_live(chat_id, delete=True)
     text = caption(chat_id, track, settings, lang=settings.get("language", "en"))
@@ -132,7 +147,10 @@ async def post(chat_id: int, track: Track, settings: dict | None = None) -> int 
         mid = await ui.send(chat_id, text, rows, sticky=True)
         has_photo = False
     if mid is None:
+        log.warning("now-playing card could not be sent in %s", chat_id)
+        player.errors.append((time.time(), chat_id, "card", "send failed"))
         return None
+    log.info("now-playing card sent in %s (photo=%s, image=%s)", chat_id, has_photo, bool(img))
     card = Card(mid, track, has_photo)
     cards[chat_id] = card
     card.task = asyncio.get_event_loop().create_task(_live(chat_id, card))

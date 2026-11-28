@@ -176,7 +176,7 @@ async def send(chat_id: int, text: str, rows=None, *, reply_to: int | None = Non
         if files and photo and res.get("photo"):
             _photo_ids[photo] = res["photo"][-1]["file_id"]
     except Exception as e:
-        log.info("raw send failed (%s); using fallback", e)
+        log.warning("raw send failed (%s); using fallback", e)
         mid = await _fallback_send(chat_id, text, rows, reply_to, photo)
     if mid:
         await _schedule_delete(chat_id, mid, sticky)

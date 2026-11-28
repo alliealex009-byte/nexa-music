@@ -98,23 +98,36 @@ async def _on_stream_end(update):
     await play_next(chat_id)
 
 
+def _register(calls, handler):
+    """Register an update handler without relying on py-tgcalls filter objects (their API changed in 3.x and
+    `filters.stream_end` raised "object stream_end can't be used in 'await' expression", so track ends were lost).
+    The handler gets every update and picks its own kind by class name."""
+    try:
+        deco = calls.on_update()
+    except TypeError:
+        deco = calls.on_update(None)
+    deco(handler)
+
+
 def _wire(calls):
-    @calls.on_update(filters.stream_end)
-    async def _on_end(_, update):
-        await _on_stream_end(update)
+    async def _on_update(_, update):
+        try:
+            kind = type(update).__name__
+            if "ended" in kind.lower() and hasattr(update, "chat_id"):
+                await _on_stream_end(update)
+            elif kind == "ChatUpdate":
+                from pytgcalls.types import ChatUpdate
 
-    try:  # voice chat closed / assistant removed -> drop the session
-        from pytgcalls.types import ChatUpdate
+                st = ChatUpdate.Status
+                closed = st.CLOSED_VOICE_CHAT | st.KICKED | st.LEFT_GROUP
+                if update.status & closed:
+                    log.info("call closed in %s", update.chat_id)
+                    _reset(update.chat_id)
+                    queue_manager.clear(update.chat_id)
+        except Exception:
+            log.exception("update handler")
 
-        closed = ChatUpdate.Status.CLOSED_VOICE_CHAT | ChatUpdate.Status.KICKED | ChatUpdate.Status.LEFT_GROUP
-
-        @calls.on_update(filters.chat_update(closed))
-        async def _on_closed(_, update):
-            log.info("call closed in %s", update.chat_id)
-            _reset(update.chat_id)
-            queue_manager.clear(update.chat_id)
-    except Exception:
-        log.warning("chat_update filter not available; relying on the watchdog")
+    _register(calls, _on_update)
 
 
 async def _notice(chat_id: int, text: str):
@@ -282,9 +295,18 @@ async def ensure_assistant(chat_id: int) -> str | None:
             _joined.add(chat_id)
             return None
         if name == "InviteRequestSent":
+            # the group approves new members: with the "invite users" right the bot can approve the request itself
+            try:
+                await _bot.approve_chat_join_request(chat_id, me.id)
+                _joined.add(chat_id)
+                log.info("approved the assistant's join request in %s", chat_id)
+                await asyncio.sleep(1.5)
+                return None
+            except Exception as e2:
+                log.info("could not approve the join request: %s", type(e2).__name__)
             return (
                 f"This group needs admin approval for new members. I sent a join request for @{me.username}: "
-                "approve it under the group's join requests (or add the assistant manually), then try again."
+                "approve it under the group's join requests (or give me the \"invite users\" admin right and I'll approve it myself), then try again."
             )
         return (
             f"I couldn't add the assistant automatically. Add @{me.username} to this group "
