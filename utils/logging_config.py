@@ -20,9 +20,5 @@ def setup_logging():
     )
     file.setFormatter(fmt)
 
-    from services import chatnames
-
-    for h in (console, file):
-        h.addFilter(chatnames.NameFilter())
     root.handlers = [console, file]
     logging.getLogger("pyrogram").setLevel(logging.WARNING)
