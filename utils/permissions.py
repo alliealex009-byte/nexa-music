@@ -8,6 +8,20 @@ def is_owner(user_id: int) -> bool:
     return user_id == config.OWNER_ID
 
 
+# Telegram's stand-in accounts for messages sent "as the group" / as a channel
+ANON_BOT_IDS = {1087968824, 136817688}
+
+
+def is_anonymous_admin(message) -> bool:
+    """An admin posting anonymously: the message is sent as the group itself (sender_chat == this chat), and
+    Telegram often also fills from_user with the GroupAnonymousBot stand-in account."""
+    chat = getattr(message, "sender_chat", None)
+    if chat is not None and message.chat and chat.id == message.chat.id:
+        return True
+    user = getattr(message, "from_user", None)
+    return bool(user and user.id == 1087968824)
+
+
 def sender_id(message) -> int | None:
     return message.from_user.id if message.from_user else None
 
@@ -31,13 +45,15 @@ async def message_is_admin(client, message) -> bool:
     """Like is_admin for a message; anonymous group admins (sent as the group) count as admins."""
     if message.chat.type == ChatType.PRIVATE:
         return False
+    if is_anonymous_admin(message):
+        return True
     if message.from_user is None:
-        return bool(message.sender_chat and message.sender_chat.id == message.chat.id)
+        return False
     return await is_admin(client, message.chat.id, message.from_user.id)
 
 
 async def message_is_privileged(client, message) -> bool:
-    if message.from_user is None:
+    if message.from_user is None or is_anonymous_admin(message):
         return await message_is_admin(client, message)
     return await is_privileged(client, message.chat.id, message.from_user.id)
 
