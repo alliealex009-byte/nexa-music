@@ -88,6 +88,7 @@ GROUP_COLUMNS = {
     "lyrics": "INTEGER DEFAULT 0",
     "karaoke": "INTEGER DEFAULT 0",
     "welcome": "INTEGER DEFAULT 0",
+    "join_accept": "INTEGER DEFAULT 0",
 }
 
 
@@ -105,6 +106,10 @@ async def init_db():
         cur = await db.execute("PRAGMA table_info(helper_sessions)")
         if "proxy" not in {row[1] for row in await cur.fetchall()}:
             await db.execute("ALTER TABLE helper_sessions ADD COLUMN proxy TEXT")
+        cur = await db.execute("SELECT value FROM kv WHERE key = 'defaults_v8'")
+        if not await cur.fetchone():  # one time: silent + delete commands on; auto-delete and autoplay off
+            await db.execute("UPDATE groups SET silent = 1, delete_commands = 1, auto_delete = 0, autoplay = 0")
+            await db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('defaults_v8', '1')")
         await db.commit()
     try:  # the DB holds API keys, proxy logins and cookies
         os.chmod(config.DB_PATH, 0o600)

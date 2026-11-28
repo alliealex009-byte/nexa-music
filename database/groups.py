@@ -9,14 +9,15 @@ DEFAULTS = {
     "auto_pause": True,  # pause when nobody is in the voice chat
     "idle_stop": True,  # leave the voice chat after it stayed empty for a while
     "play_mode": "everyone",  # who may start playback: everyone | admins | auth
-    "delete_commands": False,  # delete users' command messages
+    "delete_commands": True,  # delete users' command messages
     "auto_delete": 0,  # delete bot messages after N minutes (0 = off, 2-7)
-    "silent": False,  # hide success messages
+    "silent": True,  # hide plain confirmations ("Paused", "Skipped"…); player and queue cards always show
     "language": "en",
     "autoplay": False,
     "lyrics": False,  # show the Lyrics button and allow /lyrics in this group
     "karaoke": False,  # live lyric line on the now-playing card
     "welcome": False,  # welcome card for new members
+    "join_accept": False,  # approve join requests automatically once the member passed the DM verification
 }
 BOOL_KEYS = {k for k, v in DEFAULTS.items() if isinstance(v, bool)}
 CHOICES = {
@@ -50,8 +51,8 @@ def _coerce(key: str, value):
 async def add_group(chat_id: int, title: str):
     async with connect() as db:
         await db.execute(
-            "INSERT OR IGNORE INTO groups (chat_id, title) VALUES (?, ?)",
-            (chat_id, title),
+            "INSERT OR IGNORE INTO groups (chat_id, title, silent, delete_commands) VALUES (?, ?, ?, ?)",
+            (chat_id, title, int(DEFAULTS["silent"]), int(DEFAULTS["delete_commands"])),
         )
         await db.commit()
     invalidate(chat_id)
