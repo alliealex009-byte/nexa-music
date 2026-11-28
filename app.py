@@ -76,6 +76,7 @@ async def main():
         log.info(restored)
     await init_db()
     await logchat.load()
+    await logchat.load_target()
     from database import credentials as _cred
 
     _v = await _cred.get_kv("vplay_enabled")
@@ -106,6 +107,7 @@ async def main():
     mongo_backup.start()
     start_watchdog(bot)
     asyncio.get_event_loop().create_task(audio_provider.purge_loop(player.sources_in_use))
+    asyncio.get_event_loop().create_task(helpers.watchdog())
     audio_provider.purge_cache()
 
     log.info("Bot started as @%s", me.username)

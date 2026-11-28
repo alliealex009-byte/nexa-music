@@ -76,3 +76,8 @@ Test from the bot container: `docker compose exec nexa-music python -c "import u
 
 ## v10
 - `SESSION_STRING` is optional. Leave it empty and log assistant accounts in from the bot's DM (`/owner` → 🤖 Helpers → 📱 Add by phone number). With no assistant the bot says so instead of failing.
+
+
+## Several YouTube accounts
+Owner panel → 🍪 Cookies → **➕ Add another YouTube** (up to 10). Accounts take turns per request; one that gets
+"sign in / not a bot" rests 30 min while the next is used. **🔍 Test YouTube** checks each one. Use throwaway Google accounts — many accounts on one IP can get flagged.
