@@ -59,3 +59,8 @@ Test from the bot container: `docker compose exec nexa-music python -c "import u
 - No more automatic profile changes: nothing is renamed/deleted at startup or when a helper is added; old photos are never deleted. The "Set names/bio/photo" button does it slowly, one account at a time.
 - Helpers log in one at a time with a pause between them.
 - Search: API 8 s → yt-dlp 20 s → JioSaavn, so it can no longer hang.
+
+## v8
+- Fixed: py-tgcalls 3.x rejected `filters.stream_end` (log: "object stream_end can't be used in 'await' expression"), so end-of-track / autoplay / queue advance never fired. Updates are now registered without filters and sorted by type.
+- If a group requires admin approval for new members and the bot has the "invite users" right, the bot approves the assistant's join request itself.
+- The now-playing card can no longer fail silently: errors are logged and a plain card is sent as a fallback; `/debug` shows card errors.
