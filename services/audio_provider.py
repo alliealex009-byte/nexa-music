@@ -119,7 +119,7 @@ async def _url_playable(url: str) -> bool:
 async def _youtube_source(track: Track) -> str | None:
     # stream URLs are locked to the IP that requested them, so with proxies in use the file is
     # downloaded through the proxy and played from disk. Without proxies, stream the URL directly.
-    use_proxy = bool(await proxy_manager.pick())
+    use_proxy = config.YTDLP_USE_PROXY and bool(await proxy_manager.pick())
     try:
         if use_proxy or track.video:
             path, _ = await ytdlp_util.run(_download_work(track.url, track.video, track))

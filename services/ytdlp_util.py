@@ -1,5 +1,7 @@
 """Shared yt-dlp plumbing: cookies jar, SOCKS5 proxies (then direct), thread offloading."""
 import asyncio
+
+import config
 import logging
 import shutil
 
@@ -41,7 +43,7 @@ async def run(work, use_proxy: bool = True):
     tried: set[int] = set()
     try:
         attempts: list[tuple[int | None, str | None]] = []
-        if use_proxy:
+        if use_proxy and config.YTDLP_USE_PROXY:
             for _ in range(2):
                 picked = await proxy_manager.pick(exclude=tried)
                 if not picked:

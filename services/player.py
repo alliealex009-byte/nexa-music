@@ -31,6 +31,7 @@ class Helper:
     name: str = ""
     source: str = "env"  # env | db
     db_id: int | None = None
+    proxy: str | None = None  # the Telegram proxy this account always connects through
 
 
 _helpers: list[Helper] = []

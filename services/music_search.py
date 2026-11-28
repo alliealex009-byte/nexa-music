@@ -38,11 +38,14 @@ def _ytsearch_work(query: str, limit: int):
 
 async def search(query: str, limit: int = 5) -> list[Track]:
     """Best-effort search; never raises."""
-    api = await youtube_api.search(query, limit)
+    try:
+        api = await asyncio.wait_for(youtube_api.search(query, limit), 8)
+    except Exception:
+        api = None
     if api:
         return api
     try:
-        info, _ = await ytdlp_util.run(_ytsearch_work(query, limit))
+        info, _ = await asyncio.wait_for(ytdlp_util.run(_ytsearch_work(query, limit)), 20)
         tracks = [t for t in (_entry_to_track(e) for e in (info.get("entries") or [])) if t]
         if tracks:
             return tracks
