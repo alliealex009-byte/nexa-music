@@ -279,3 +279,22 @@ async def purge_loop(in_use):
             purge_cache(keep=in_use())
         except Exception:
             log.exception("cache purge")
+
+
+async def daily_clean_loop(in_use, hour: int = 3, tz: str = "Asia/Kolkata"):
+    """Every day at 03:00 India time: delete all cached audio/video except what is playing right now."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tz)
+    while True:
+        now = datetime.now(zone)
+        nxt = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(days=1)
+        await asyncio.sleep((nxt - now).total_seconds())
+        try:
+            n = purge_cache(0, keep=in_use())
+            log.info("daily cache clean at %s: removed %s files", hour, n)
+        except Exception:
+            log.exception("daily cache clean")

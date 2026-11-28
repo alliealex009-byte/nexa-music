@@ -214,11 +214,8 @@ def render_player(cover: bytes | None, title: str, subtitle: str, duration: int,
         d.text((x, by + 30), _clock(position), font=_font(28), fill=(220, 220, 230))
         end = _clock(duration) if duration else "LIVE"
         d.text((W - 70 - d.textlength(end, font=_font(28)), by + 30), end, font=_font(28), fill=(220, 220, 230))
-        bf = _font(60, True)
-        bw = d.textlength("RIA MUSIC", font=bf)
-        d.rounded_rectangle((x, 566, x + 10, 650), 5, fill=ACCENT)
-        d.text((x + 28, 562), "RIA MUSIC", font=bf, fill=(255, 255, 255))
-        d.rounded_rectangle((x + 28, 642, x + 28 + int(bw), 648), 3, fill=ACCENT)
+        d.rounded_rectangle((x, 586, x + 8, 640), 4, fill=ACCENT)
+        d.text((x + 24, 584), "RIA MUSIC", font=_font(46, True), fill=(255, 255, 255))
         return _jpeg(bg)
     except Exception:
         log.exception("render_player")

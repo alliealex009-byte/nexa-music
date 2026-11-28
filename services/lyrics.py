@@ -1,4 +1,5 @@
 """Lyrics from LRCLIB (community database, no key needed)."""
+import asyncio
 import logging
 import re
 
@@ -27,8 +28,14 @@ async def _get(path: str, params: dict):
             return await r.json(content_type=None)
 
 
+_NOISE = re.compile(r"\b(official|music|video|audio|lyrics?|lyrical|hd|4k|full|song|new|ft|feat)\b", re.I)
+
+
 def _tokens(text: str) -> set[str]:
-    return {t for t in re.split(r"[\s_\-|,.:;/()\[\]&+'\"!?]+", clean_title(text).lower()) if len(t) > 1}
+    """Words of a title. Unlike clean_title this keeps everything after a '|' (that is where YouTube titles put
+    the song name: 'KK | Dil Ibaadat Kar Raha Hai | Emraan Hashmi')."""
+    text = _NOISE.sub(" ", re.sub(r"\(.*?\)|\[.*?\]", " ", text))
+    return {t for t in re.split(r"[\s_\-|~,.:;/()\[\]&+'\"!?]+", text.lower()) if len(t) > 1}
 
 
 def _score(item: dict, want: set[str], duration: int | None) -> float:
@@ -38,6 +45,9 @@ def _score(item: dict, want: set[str], duration: int | None) -> float:
     have = name | _tokens(item.get("artistName", ""))
     if not want or not have:
         return 0.0
+    artist = _tokens(item.get("artistName", ""))
+    if len(name) == 1 and len(want) > 2 and not (artist & want):
+        return -1.0  # a one-word title ("kk") matches any long request; only trust it if the artist matches too
     cover = len(want & name) / len(name) if name else len(want & have) / len(have)
     score = cover + 0.3 * len(want & have) / len(want)
     if duration and item.get("duration"):
@@ -46,28 +56,45 @@ def _score(item: dict, want: set[str], duration: int | None) -> float:
     return score
 
 
+def allowed_script(text: str, share: float = 0.92) -> bool:
+    """Only English / Hinglish (Latin) and Hindi (Devanagari) lyrics: no Russian, Arabic, CJK... wrong-song results."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    ok = sum(1 for c in letters if c < "\u0250" or "\u0900" <= c <= "\u097F")
+    return ok / len(letters) >= share
+
+
 def _queries(raw: str) -> list[str]:
-    """Search phrasings, most specific first: lrclib returns nothing when a query has extra words."""
+    """Search phrasings: each '|'-separated part with 2+ words (the song name is one of them), then the whole
+    title. lrclib returns nothing when a query has too many words, so the long one is capped."""
+    plain = re.sub(r"\(.*?\)|\[.*?\]", " ", raw)
+    parts = [re.sub(r"\s+", " ", _NOISE.sub(" ", p)).strip(" -") for p in re.split(r"[|~–—]|\s-\s", plain)]
+    whole = " ".join(re.sub(r"\s+", " ", _NOISE.sub(" ", plain.replace("|", " "))).split()[:8])
     out = []
-    full = clean_title(raw)
-    head = clean_title(re.split(r"[|~–—]|\s-\s", re.sub(r"\(.*?\)|\[.*?\]", " ", raw))[0])
-    short = " ".join(head.split()[:4])
-    for q in (full, head, short):
+    for q in [p for p in parts if len(p.split()) >= 2][:3] + [whole]:
         if q and q not in out:
             out.append(q)
     return out
 
 
 async def _search(raw: str) -> list:
-    for q in _queries(raw):
+    """Results of every phrasing together (the ranking picks the right one), de-duplicated."""
+    async def one(q):
         try:
-            results = await _get("/search", {"q": q}) or []
+            return await _get("/search", {"q": q}) or []
         except Exception as e:
             log.info("lyrics search failed: %s", type(e).__name__)
-            continue
-        if results:
-            return results
-    return []
+            return []
+
+    merged, seen = [], set()
+    for batch in await asyncio.gather(*[one(q) for q in _queries(raw)]):
+        for item in batch:
+            key = item.get("id") or (item.get("trackName"), item.get("artistName"), item.get("duration"))
+            if key not in seen:
+                seen.add(key)
+                merged.append(item)
+    return merged
 
 
 async def find(query: str, duration: int | None = None) -> tuple[str, str] | None:
@@ -79,7 +106,8 @@ async def find(query: str, duration: int | None = None) -> tuple[str, str] | Non
     want = _tokens(query)
     ranked = sorted((r for r in results if (r.get("plainLyrics") or "").strip()),
                     key=lambda r: _score(r, want, duration), reverse=True)
-    if not ranked or _score(ranked[0], want, duration) < 0.6:
+    ranked = [r for r in ranked if allowed_script(r["plainLyrics"]) and _score(r, want, duration) >= 0.6]
+    if not ranked:
         return None
     best = ranked[0]
     return f"{best.get('artistName', '')} - {best.get('trackName', '')}".strip(" -"), best["plainLyrics"].strip()
@@ -120,6 +148,5 @@ async def find_synced(query: str, duration: int = 0) -> list[tuple[float, str]]:
     want = _tokens(query)
     ranked = sorted((r for r in results if (r.get("syncedLyrics") or "").strip()),
                     key=lambda r: _score(r, want, duration or None), reverse=True)
-    if not ranked or _score(ranked[0], want, duration or None) < 0.6:
-        return []
-    return parse_lrc(ranked[0]["syncedLyrics"])
+    ranked = [r for r in ranked if allowed_script(r["syncedLyrics"]) and _score(r, want, duration or None) >= 0.6]
+    return parse_lrc(ranked[0]["syncedLyrics"]) if ranked else []
