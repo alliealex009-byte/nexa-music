@@ -89,6 +89,7 @@ GROUP_COLUMNS = {
     "karaoke": "INTEGER DEFAULT 0",
     "welcome": "INTEGER DEFAULT 0",
     "join_accept": "INTEGER DEFAULT 0",
+    "kind": "TEXT DEFAULT 'group'",
 }
 
 

@@ -48,12 +48,19 @@ def _coerce(key: str, value):
     return value
 
 
-async def add_group(chat_id: int, title: str):
+def kind_of(chat) -> str:
+    """'group' | 'channel' from a pyrogram Chat (supergroups count as groups)."""
+    t = str(getattr(chat, "type", "")).lower()
+    return "channel" if "channel" in t else "group"
+
+
+async def add_group(chat_id: int, title: str, kind: str = "group"):
     async with connect() as db:
         await db.execute(
-            "INSERT OR IGNORE INTO groups (chat_id, title, silent, delete_commands) VALUES (?, ?, ?, ?)",
-            (chat_id, title, int(DEFAULTS["silent"]), int(DEFAULTS["delete_commands"])),
+            "INSERT OR IGNORE INTO groups (chat_id, title, silent, delete_commands, kind) VALUES (?, ?, ?, ?, ?)",
+            (chat_id, title, int(DEFAULTS["silent"]), int(DEFAULTS["delete_commands"]), kind),
         )
+        await db.execute("UPDATE groups SET kind = ? WHERE chat_id = ? AND (kind IS NULL OR kind != ?)", (kind, chat_id, kind))
         await db.commit()
     invalidate(chat_id)
 
@@ -98,3 +105,16 @@ async def count_groups() -> int:
     async with connect() as db:
         cur = await db.execute("SELECT COUNT(*) FROM groups")
         return (await cur.fetchone())[0]
+
+
+async def count_by_kind() -> dict:
+    async with connect() as db:
+        cur = await db.execute("SELECT COALESCE(kind, 'group'), COUNT(*) FROM groups GROUP BY 1")
+        return dict(await cur.fetchall())
+
+
+async def title_of(chat_id: int) -> str:
+    async with connect() as db:
+        cur = await db.execute("SELECT title FROM groups WHERE chat_id = ?", (chat_id,))
+        row = await cur.fetchone()
+        return (row[0] if row else "") or ""
