@@ -64,9 +64,9 @@ async def menu_cb(client: Client, q: CallbackQuery):
 async def help_cb(client, q):
     page = q.data.split(":")[1]
     if page == "home":
-        await _edit(q, helptext.hub_text(), kb.help_hub())
+        await ui.edit_cb_rich(q, helptext.rich_hub(), helptext.hub_text(), kb.help_hub())
     elif page in helptext.PAGES:
-        await _edit(q, helptext.PAGES[page], kb.help_page(page))
+        await ui.edit_cb_rich(q, helptext.rich_page(page), helptext.PAGES[page], kb.help_page(page))
     await q.answer()
 
 

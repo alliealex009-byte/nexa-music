@@ -81,12 +81,33 @@ async def start_cmd(client: Client, message: Message):
         await users_db.add_user(user.id, user.first_name)
     else:
         await groups_db.add_group(message.chat.id, message.chat.title or "")
+    payload = message.command[1] if len(message.command) > 1 else ""
+    if payload.startswith("song_") and message.chat.type == ChatType.PRIVATE:
+        return await song_card(message, payload[5:])
     await send_welcome(message, user.first_name)
+
+
+async def song_card(message: Message, video_id: str):
+    """Opened from a song link in a player card: title, a way to the original, and how to play it."""
+    import re as _re
+
+    from services import youtube_api
+    from services.ui import b
+
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        return await send_welcome(message, message.from_user.first_name)
+    track = await youtube_api.oembed(video_id)
+    title = esc(track.title) if track else "this song"
+    rows = [[b("▶️ Open on YouTube", url=f"https://www.youtube.com/watch?v={video_id}")],
+            [b("➕ Add me to a group", url=f"https://t.me/{ui.bot_username}?startgroup=true", style="success")]]
+    text = (f"<blockquote>🎵 <b>{title}</b></blockquote>\nIn a group with me, play it with\n"
+            f"<code>/play https://youtu.be/{video_id}</code>")
+    await ui.send(message.chat.id, text, rows, photo=track.thumbnail if track and track.thumbnail else None)
 
 
 @Client.on_message(filters.command("help"))
 async def help_cmd(client: Client, message: Message):
-    await ui.reply(message, helptext.hub_text(), help_hub(), sticky=True)
+    await ui.send_rich(message.chat.id, helptext.rich_hub(), help_hub(), helptext.hub_text(), reply_to=message.id)
 
 
 @Client.on_message(filters.new_chat_members)

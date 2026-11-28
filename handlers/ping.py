@@ -54,7 +54,7 @@ async def ping_cmd(client, message):
     if message.from_user and message.from_user.id == config.OWNER_ID:
         snap = sysinfo.snapshot()
         cpu = f"{snap['cpu']:.0f}%" if snap.get("cpu") is not None else "n/a"
-        lines[-1] += f"\n<b>SERVER:</b> CPU {cpu} · RAM {snap['ram']} · Disk {snap['disk']}"
+        lines[-1] += f"\n<b>SERVER:</b> CPU {cpu} · RAM {snap['ram']}"
     lines[-1] += "</blockquote>"
     text = "\n".join(lines)
     row = [b("👑 OWNER", url=f"tg://user?id={config.OWNER_ID}", style="primary")]

@@ -58,7 +58,7 @@ async def render(page: str) -> tuple[str, list]:
         return "💎 <b>Premium users</b>\nGrant or revoke premium (more playlists).", kb.premium_menu()
     return (
         f"🛠 <b>{esc(config.BOT_NAME)} — owner panel</b>\nEverything you can manage lives here. Pick a tool:",
-        kb.home(logchat.enabled()),
+        kb.home(logchat.enabled(), config.ENABLE_VPLAY),
     )
 
 
@@ -118,6 +118,10 @@ async def own_cb(client, q):
         await q.answer("Running checks…")
         await ui.edit_cb(q, "🔎 Running checks… (up to 30 seconds)", [[kb.BACK]])
         return await ui.edit_cb(q, await ops.diagnostics(), [[kb.BACK]])
+    elif area == "vplay":
+        config.ENABLE_VPLAY = not config.ENABLE_VPLAY
+        await cred.set_kv("vplay_enabled", "1" if config.ENABLE_VPLAY else "0")
+        return await _answer(q, page("home"), "Video play " + ("on" if config.ENABLE_VPLAY else "off"))
     elif area == "logger":
         await logchat.set_enabled(not logchat.enabled())
         return await _answer(q, page("home"), "Logger " + ("on" if logchat.enabled() else "off"))
@@ -161,6 +165,9 @@ async def own_cb(client, q):
             return await _answer(q, _prompt(q, "cookie", service=arg))
         if act == "other":
             return await _answer(q, _prompt(q, "cookie_site"))
+        if act == "test" and arg == "spotify":
+            await q.answer("Testing…")
+            return await page("cookies", await ops.verify_spotify_cookies())
         if act == "test":
             await q.answer("Testing… (up to 90s)")
             await ui.edit_cb(q, "🔍 Testing your YouTube cookies against a real video…", [[kb.BACK]])

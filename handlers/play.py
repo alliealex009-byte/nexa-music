@@ -61,8 +61,6 @@ def _fail_text(ctx_or_lang, chat_id: int) -> str:
 # ------------------------------------------------------------------ hooks used by the player
 async def _on_now_playing(chat_id: int, track: Track):
     settings = await groups_db.get_settings(chat_id)
-    if settings["silent"]:
-        return
     await nowplaying.post(chat_id, track, settings)
     await logchat.event(f"▶️ <b>{esc(track.title)}</b> in <code>{chat_id}</code>")
 
@@ -110,6 +108,10 @@ player.hooks["status"] = _on_status
 
 # ------------------------------------------------------------------ helpers
 def _requester(message: Message) -> tuple[int, str]:
+    from utils.permissions import is_anonymous_admin
+
+    if is_anonymous_admin(message):
+        return 0, "Anonymous admin"
     if message.from_user:
         return message.from_user.id, message.from_user.first_name or "User"
     return 0, "Anonymous"
@@ -180,10 +182,6 @@ async def _finish(message: Message, ctx: Ctx, progress: int | None, status: str,
         return await _edit_or_send(message, progress, text)
     if status == "full":
         return await _edit_or_send(message, progress, ctx.t("queue_full"))
-    if ctx.silent:  # progress and errors stay visible; the final success message is hidden
-        if progress:
-            await ui.delete(chat_id, progress)
-        return
     if status == "playing":
         if progress:
             await ui.delete(chat_id, progress)
