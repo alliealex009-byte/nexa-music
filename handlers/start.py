@@ -9,6 +9,7 @@ from database import groups as groups_db
 from database import users as users_db
 from keyboards.inline import help_hub, main_menu
 from services import helptext, ui
+from utils.text import esc
 
 
 def welcome_text(name: str, proxy_active: bool = False) -> str:
@@ -99,3 +100,26 @@ async def joined(client: Client, message: Message):
             "voice chat and use /play. Settings: /settings · Help: /help",
             sticky=True,
         )
+        return
+    settings = await groups_db.get_settings(message.chat.id)
+    if not settings.get("welcome"):
+        return
+    from services import cardimg
+
+    for u in message.new_chat_members:
+        if u.is_bot:
+            continue
+        avatar = None
+        try:
+            if getattr(u, "photo", None):
+                path = await client.download_media(u.photo.small_file_id, in_memory=True)
+                avatar = bytes(path.getbuffer()) if path else None
+        except Exception:
+            avatar = None
+        img = await cardimg.render(cardimg.render_welcome, avatar, u.first_name or "New member", u.id, u.username,
+                                   message.chat.title or "", await cardimg.fetch(config.WELCOME_IMAGE))
+        name = f'<a href="tg://user?id={u.id}">{esc(u.first_name or "friend")}</a>'
+        text = (f"<blockquote>👋 <b>ᴡᴇʟᴄᴏᴍᴇ</b> {name}</blockquote>\n"
+                f"<blockquote expandable><b>NAME:</b> {esc(u.first_name or '')}\n<b>ID:</b> <code>{u.id}</code>\n"
+                f"<b>USERNAME:</b> {'@' + u.username if u.username else '—'}</blockquote>")
+        await ui.send(message.chat.id, text, None, photo_bytes=img, sticky=False)

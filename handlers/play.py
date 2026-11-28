@@ -78,6 +78,19 @@ async def _on_notice(chat_id: int, key: str):
     await ui.send(chat_id, t(settings["language"], key))
 
 
+PROGRESS: dict[int, int] = {}  # chat -> the "searching…" message of a /play that is still loading
+
+
+async def _on_status(chat_id: int, key: str):
+    if key == "clear":
+        return await nowplaying.drop(chat_id)
+    if await nowplaying.show_status(chat_id, key):
+        return
+    mid = PROGRESS.get(chat_id)
+    if mid:
+        await ui.edit(chat_id, mid, nowplaying.status_text(key), None)
+
+
 async def _on_state(chat_id: int):
     await nowplaying.refresh(chat_id)
 
@@ -92,6 +105,7 @@ player.hooks["state"] = _on_state
 player.hooks["ended"] = _on_ended
 player.hooks["now_playing"] = _on_now_playing
 player.hooks["notice"] = _on_notice
+player.hooks["status"] = _on_status
 
 
 # ------------------------------------------------------------------ helpers
@@ -177,9 +191,44 @@ async def _finish(message: Message, ctx: Ctx, progress: int | None, status: str,
         if extra:
             await ui.send(chat_id, f"➕ +{extra} more tracks queued")
     else:
-        await _edit_or_send(message, progress, queued_text(first, pos, extra, ctx.lang),
-                            controls_for(chat_id, settings=ctx.settings))
+        await _send_queued(message, progress, first, pos, extra, ctx)
     await logchat.event(f"🎵 <b>{esc(first.title)}</b> requested in <code>{chat_id}</code>")
+
+
+def starts_in(chat_id: int, pos: int) -> int:
+    """Seconds until the track at queue position `pos` (1 = next) begins."""
+    from services import player as _p
+
+    cur = queue_manager.current(chat_id)
+    left = max((cur.duration or 0) - _p.position(chat_id), 0) if cur else 0
+    ahead = queue_manager.upcoming(chat_id)[: max(pos - 1, 0)]
+    return left + sum(t.duration or 0 for t in ahead)
+
+
+async def _send_queued(message, progress, first, pos, extra, ctx):
+    from services import cardimg
+    from services.ui import b
+
+    chat_id = message.chat.id
+    wait = starts_in(chat_id, pos)
+    eta = f"{wait // 60}M {wait % 60:02d}S" if wait else "SOON"
+    in_line = len(queue_manager.upcoming(chat_id))
+    text = (f"<blockquote>{ui.em('queue', '📋')} <b>ǫᴜᴇᴜᴇᴅ #{pos + 1:02d}</b> · {in_line} ɪɴ ʟɪɴᴇ</blockquote>\n"
+            f"<blockquote expandable><b>TRACK:</b> {esc(first.title)}\n<b>DURATION:</b> {fmt_duration(first.duration)}\n"
+            f"<b>STARTS IN:</b> {eta}\n<b>REQUESTED BY:</b> {esc(first.requested_name or '—')}"
+            + (f"\n<b>+{extra} MORE QUEUED</b>" if extra else "") + "</blockquote>")
+    rows = [[b("▶️ Play Now", f"qnow:{pos}", style="success", emoji="play"),
+             b("⏭ Skip", "ctl:skip", style="primary", emoji="skip")],
+            [b("✖️ Close", "close", style="danger", emoji="close")]]
+    cover = await cardimg.fetch(nowplaying.thumbnail_for(first))
+    img = await cardimg.render(cardimg.render_queue, cover, first.title, first.requested_name or "—", pos + 1,
+                               in_line, eta, await cardimg.fetch(config.WELCOME_IMAGE))
+    mid = await ui.send(chat_id, text, rows, photo_bytes=img) if img else None
+    if mid:
+        if progress:
+            await ui.delete(chat_id, progress)
+        return
+    await _edit_or_send(message, progress, text, rows)
 
 
 async def _edit_or_send(message: Message, progress: int | None, text: str, rows=None):
@@ -237,8 +286,14 @@ async def _play_body(client, message, ctx, progress, media, query, reply, *, vid
         return await _edit_or_send(message, progress, ctx.t("not_found"))
 
     uid, name = _requester(message)
-    status, pos, extra = await asyncio.wait_for(
-        enqueue_tracks(chat_id, tracks, uid, name, video=video, force=force), config.SEARCH_TIMEOUT * 2)
+    if progress:
+        PROGRESS[chat_id] = progress
+        await ui.edit(chat_id, progress, nowplaying.status_text("downloading"), None)
+    try:
+        status, pos, extra = await asyncio.wait_for(
+            enqueue_tracks(chat_id, tracks, uid, name, video=video, force=force), config.SEARCH_TIMEOUT * 2)
+    finally:
+        PROGRESS.pop(chat_id, None)
     await _finish(message, ctx, progress, status, pos, extra, tracks[0])
 
 

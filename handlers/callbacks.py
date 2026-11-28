@@ -71,6 +71,20 @@ async def help_cb(client, q):
 
 
 # ------------------------------------------------------------------ player buttons
+@Client.on_callback_query(filters.regex(r"^qnow:\d+$"))
+async def queue_play_now_cb(client: Client, q: CallbackQuery):
+    chat_id = q.message.chat.id
+    settings = await groups_db.get_settings(chat_id)
+    if not await can_control_uid(client, chat_id, q.from_user.id, settings):
+        return await q.answer("Only admins or authorized users can do this.", show_alert=True)
+    track = queue_manager.remove_at(chat_id, int(q.data.split(":")[1]))
+    if track is None:
+        return await q.answer("That track already started or was removed.", show_alert=True)
+    await q.answer("Starting…")
+    await ui.delete(chat_id, q.message.id)
+    await player.play_now(chat_id, [track])
+
+
 @Client.on_callback_query(filters.regex(r"^ctl:"))
 async def control_cb(client: Client, q: CallbackQuery):
     chat_id = q.message.chat.id
@@ -100,11 +114,11 @@ async def control_cb(client: Client, q: CallbackQuery):
         return await q.answer("Nothing is playing.", show_alert=True)
     try:
         if action == "pause":
-            await player.pause(chat_id)
-            await q.answer("Paused")
+            ok = await player.pause(chat_id)
+            await q.answer("Paused" if ok else "Couldn't pause — try /skip or /play again", show_alert=not ok)
         elif action == "resume":
-            await player.resume(chat_id)
-            await q.answer("Resumed")
+            ok = await player.resume(chat_id)
+            await q.answer("Resumed" if ok else "Couldn't resume — try /skip or /play again", show_alert=not ok)
         elif action == "skip":
             nxt = await player.skip(chat_id)
             await q.answer("Skipped" if nxt else "Queue finished")
@@ -115,9 +129,9 @@ async def control_cb(client: Client, q: CallbackQuery):
             new = await player.seek(chat_id, -10 if action == "seekb" else 10)
             await q.answer("Can't seek here" if new is None else f"At {new // 60}:{new % 60:02d}")
         elif action in ("mute", "unmute"):
-            await (player.mute if action == "mute" else player.unmute)(chat_id)
+            ok = await (player.mute if action == "mute" else player.unmute)(chat_id)
             await _rerender(q, settings)
-            await q.answer("Muted" if action == "mute" else "Unmuted")
+            await q.answer(("Muted" if action == "mute" else "Unmuted") if ok else "Couldn't do that", show_alert=not ok)
         elif action == "loop":
             nxt_mode = {"off": "track", "track": "queue", "queue": "off"}[queue_manager.loop_mode(chat_id)]
             queue_manager.set_loop(chat_id, nxt_mode)

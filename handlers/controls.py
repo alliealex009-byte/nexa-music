@@ -34,7 +34,8 @@ async def skip_cmd(client, message, ctx):
 async def pause_cmd(client, message, ctx):
     if not await _allowed(client, message, ctx) or not await _playing(message, ctx):
         return
-    await player.pause(message.chat.id)
+    if not await player.pause(message.chat.id):
+        return await ui.reply(message, "❌ Couldn't pause — the stream isn't responding. Try /skip or /play again.")
     await respond(message, ctx, ctx.t("paused"), success=True)
 
 
@@ -43,7 +44,8 @@ async def pause_cmd(client, message, ctx):
 async def resume_cmd(client, message, ctx):
     if not await _allowed(client, message, ctx) or not await _playing(message, ctx):
         return
-    await player.resume(message.chat.id)
+    if not await player.resume(message.chat.id):
+        return await ui.reply(message, "❌ Couldn't resume — the stream isn't responding. Try /skip or /play again.")
     await respond(message, ctx, ctx.t("resumed"), success=True)
 
 
@@ -61,7 +63,8 @@ async def stop_cmd(client, message, ctx):
 async def mute_cmd(client, message, ctx):
     if not await _allowed(client, message, ctx) or not await _playing(message, ctx):
         return
-    await player.mute(message.chat.id)
+    if not await player.mute(message.chat.id):
+        return await ui.reply(message, "❌ Couldn't mute — the stream isn't responding. Try /skip or /play again.")
     await respond(message, ctx, ctx.t("muted"), success=True)
 
 
@@ -70,7 +73,8 @@ async def mute_cmd(client, message, ctx):
 async def unmute_cmd(client, message, ctx):
     if not await _allowed(client, message, ctx) or not await _playing(message, ctx):
         return
-    await player.unmute(message.chat.id)
+    if not await player.unmute(message.chat.id):
+        return await ui.reply(message, "❌ Couldn't unmute — the stream isn't responding. Try /skip or /play again.")
     await respond(message, ctx, ctx.t("unmuted"), success=True)
 
 
