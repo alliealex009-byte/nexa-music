@@ -46,3 +46,9 @@ Test from the bot container: `docker compose exec nexa-music python -c "import u
 
 ## Pictures
 `assets/welcome.jpg` is the welcome banner, `assets/dp.jpg` the square profile picture (set the bot's own picture in @BotFather → /setuserpic).
+
+## v6 – reliability + Stella-style cards
+- Skip / pause / resume / end / play now work back-to-back: stray "stream ended" events after a track switch are ignored, track changes are serialised per chat, and failed pause/resume report an error instead of silently doing nothing.
+- Direct YouTube stream URLs are checked first; an unreadable URL (silent call) is downloaded instead. The next track is pre-resolved while the current one plays, so Skip is fast.
+- New cards: rendered player image, `ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴀᴜᴅɪᴏ ...` / `sᴛᴀʀᴛɪɴɢ sᴛʀᴇᴀᴍ ...` status, progress-time button, queued card (Play Now / Skip / Close), ping card, optional welcome card (Settings → Welcome card).
+- Owner command `/debug` lists the last playback errors.
