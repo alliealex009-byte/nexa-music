@@ -67,8 +67,8 @@ async def ping_cmd(client, message):
         f"<b>LATENCY:</b> {send_ms:.0f} ms" + (f" · API {api_ms:.0f} ms" if api_ms is not None and rtt is not None else "") + "\n"
         + (f"<b>VOICE:</b> {' · '.join(voice)}\n" if voice and is_owner else "")
         + f"<b>UPTIME:</b> {sysinfo.uptime()}\n"
-        f"<b>STATUS:</b> {status} · 🎧 {len(queue_manager.active_chats())} chat(s)"
-        + (f" · 🤖 {len(player.helpers())} helper(s)" if is_owner else ""),
+        f"<b>STATUS:</b> {status}"
+        + (f" · 🎧 {len(queue_manager.active_chats())} chat(s) · 🤖 {len(player.helpers())} helper(s)" if is_owner else ""),
     ]
     if is_owner:
         snap = sysinfo.snapshot()
