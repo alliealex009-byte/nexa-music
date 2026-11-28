@@ -62,7 +62,9 @@ def _fmt(video: bool) -> str:
         h = config.VIDEO_MAX_HEIGHT
         return f"best[height<={h}][ext=mp4]/best[height<={h}]/best"
     # AAC/m4a (~128k) is the smallest good stream: fewer bytes = faster start
-    return "bestaudio[ext=m4a]/bestaudio/best"
+    # never fall back to "best": when YouTube offers no audio-only stream that is the full HD video (70+ MB).
+    # The smallest stream that has sound is enough, the call ignores the picture anyway.
+    return "bestaudio[ext=m4a]/bestaudio/worst[acodec!=none]/worst"
 
 
 # async callback(percent, speed_bps, eta) set by the player while a track loads
@@ -106,7 +108,14 @@ def _download_work(url: str, video: bool, track: Track | None = None):
             if not info:
                 raise RuntimeError("filtered")
             _learn(track, info)
-            return ydl.prepare_filename(info)
+            path = ydl.prepare_filename(info)
+            try:
+                size = os.path.getsize(path) / 1048576
+            except OSError:
+                size = 0
+            log.info("downloaded %s: format %s (%s, %s) %.1f MB", info.get("id"), info.get("format_id"),
+                     info.get("acodec"), info.get("vcodec"), size)
+            return path
     return work
 
 

@@ -21,7 +21,7 @@ def js_runtime() -> str | None:
 
 
 def base_opts(proxy: str | None = None, jar: str | None = None) -> dict:
-    opts = {"quiet": True, "no_warnings": True, "geo_bypass": True, "socket_timeout": 20, "retries": 2,
+    opts = {"quiet": True, "no_warnings": True, "noprogress": True, "geo_bypass": True, "socket_timeout": 20, "retries": 2,
             "remote_components": ["ejs:github"]}  # challenge-solver scripts (also bundled with yt-dlp[default])
     runtime = js_runtime()
     if runtime:

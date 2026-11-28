@@ -442,6 +442,8 @@ async def play_or_queue(chat_id: int, track: Track) -> tuple[str, int]:
             return "error", 0
         return "playing", 0
     pos = queue_manager.add(chat_id, track)
+    if pos is not None and pos <= 1:  # next in line: fetch its audio now so it starts instantly
+        asyncio.get_running_loop().create_task(audio_provider.prefetch(track))
     return ("full", 0) if pos is None else ("queued", pos)
 
 

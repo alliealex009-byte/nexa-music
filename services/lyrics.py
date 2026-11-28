@@ -11,7 +11,7 @@ log = logging.getLogger("lyrics")
 
 def clean_title(title: str) -> str:
     title = re.sub(r"\(.*?\)|\[.*?\]", " ", title)
-    title = re.sub(r"\b(official|music|video|audio|lyrics?|lyrical|hd|4k|full song|ft\.?.*|feat\.?.*)\b", " ", title, flags=re.I)
+    title = re.sub(r"\b(official|music|video|audio|lyrics?|lyrical|hd|4k|full|song|new|ft\.?.*|feat\.?.*)\b", " ", title, flags=re.I)
     title = re.sub(r"\|.*$", " ", title)
     return re.sub(r"\s+", " ", title).strip(" -–")
 
@@ -46,17 +46,36 @@ def _score(item: dict, want: set[str], duration: int | None) -> float:
     return score
 
 
+def _queries(raw: str) -> list[str]:
+    """Search phrasings, most specific first: lrclib returns nothing when a query has extra words."""
+    out = []
+    full = clean_title(raw)
+    head = clean_title(re.split(r"[|~–—]|\s-\s", re.sub(r"\(.*?\)|\[.*?\]", " ", raw))[0])
+    short = " ".join(head.split()[:4])
+    for q in (full, head, short):
+        if q and q not in out:
+            out.append(q)
+    return out
+
+
+async def _search(raw: str) -> list:
+    for q in _queries(raw):
+        try:
+            results = await _get("/search", {"q": q}) or []
+        except Exception as e:
+            log.info("lyrics search failed: %s", type(e).__name__)
+            continue
+        if results:
+            return results
+    return []
+
+
 async def find(query: str, duration: int | None = None) -> tuple[str, str] | None:
     """Returns (heading, plain lyrics) or None. The best-matching result wins (title words + song length),
     and a result that barely resembles the song is rejected instead of showing the wrong lyrics."""
-    query = clean_title(query)
-    if not query:
+    if not clean_title(query):
         return None
-    try:
-        results = await _get("/search", {"q": query}) or []
-    except Exception as e:
-        log.info("lyrics search failed: %s", type(e).__name__)
-        return None
+    results = await _search(query)
     want = _tokens(query)
     ranked = sorted((r for r in results if (r.get("plainLyrics") or "").strip()),
                     key=lambda r: _score(r, want, duration), reverse=True)
@@ -95,14 +114,9 @@ def line_at(lines: list[tuple[float, str]], position: float) -> str:
 
 async def find_synced(query: str, duration: int = 0) -> list[tuple[float, str]]:
     """Time-stamped lyrics for karaoke mode ([] if the database has none)."""
-    query = clean_title(query)
-    if not query:
+    if not clean_title(query):
         return []
-    try:
-        results = await _get("/search", {"q": query}) or []
-    except Exception as e:
-        log.info("synced lyrics search failed: %s", type(e).__name__)
-        return []
+    results = await _search(query)
     want = _tokens(query)
     ranked = sorted((r for r in results if (r.get("syncedLyrics") or "").strip()),
                     key=lambda r: _score(r, want, duration or None), reverse=True)

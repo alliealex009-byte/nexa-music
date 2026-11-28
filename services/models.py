@@ -13,6 +13,7 @@ class Track:
     source: str = "youtube"
     stream_url: str = ""  # direct audio URL (JioSaavn) or local path (Telegram file)
     video: bool = False  # play as video in the video chat
+    queued_mid: int = 0  # message id of its "queued" card, removed when it starts playing
     error: str = ""  # why the last attempt to get a stream failed: blocked | unavailable | failed
 
     @staticmethod

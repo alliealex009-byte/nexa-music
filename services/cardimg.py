@@ -4,6 +4,8 @@ import asyncio
 import io
 import logging
 import os
+import re
+import unicodedata
 import time
 
 import aiohttp
@@ -20,6 +22,14 @@ W, H = 1280, 720
 ACCENT = (255, 94, 120)
 _cache: dict[str, tuple[float, bytes]] = {}
 _session: aiohttp.ClientSession | None = None
+
+
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200d]")
+
+
+def _clean(text: str) -> str:
+    """Fancy styled letters (𝑹𝒊𝒂 𝙉𝙤 𝘼𝙙𝙨) -> plain ones, and drop emoji: no font here draws either (empty boxes)."""
+    return re.sub(r"\s+", " ", _EMOJI.sub("", unicodedata.normalize("NFKC", text or ""))).strip()
 
 
 _SCRIPT_FONTS = [  # (first, last code point, font file names to look for)
@@ -144,6 +154,7 @@ def _rounded(img, size: int, radius: int):
 
 
 def _fit_text(draw, text: str, font_fn, max_w: int, size: int, bold=True, min_size=30):
+    text = _clean(text)
     while size > min_size:
         f = font_fn(size, bold, text)
         if draw.textlength(text, font=f) <= max_w:
@@ -203,8 +214,11 @@ def render_player(cover: bytes | None, title: str, subtitle: str, duration: int,
         d.text((x, by + 30), _clock(position), font=_font(28), fill=(220, 220, 230))
         end = _clock(duration) if duration else "LIVE"
         d.text((W - 70 - d.textlength(end, font=_font(28)), by + 30), end, font=_font(28), fill=(220, 220, 230))
-        d.rounded_rectangle((x, 586, x + 8, 640), 4, fill=ACCENT)
-        d.text((x + 24, 584), "RIA MUSIC", font=_font(46, True), fill=(255, 255, 255))
+        bf = _font(60, True)
+        bw = d.textlength("RIA MUSIC", font=bf)
+        d.rounded_rectangle((x, 566, x + 10, 650), 5, fill=ACCENT)
+        d.text((x + 28, 562), "RIA MUSIC", font=bf, fill=(255, 255, 255))
+        d.rounded_rectangle((x + 28, 642, x + 28 + int(bw), 648), 3, fill=ACCENT)
         return _jpeg(bg)
     except Exception:
         log.exception("render_player")
@@ -229,7 +243,7 @@ def render_queue(cover: bytes | None, title: str, requested_by: str, number: int
         bg.paste(mask, (150, 305), mask)
         t, f = _fit_text(d, title, _font, W - 520, 46, min_size=30)
         d.text((410, 340), t, font=f, fill="white")
-        d.text((410, 415), f"Requested by {requested_by}", font=_font(30, False), fill=(190, 190, 200))
+        d.text((410, 415), f"Requested by {_clean(requested_by)}", font=_font(30, False), fill=(190, 190, 200))
         return _jpeg(bg)
     except Exception:
         log.exception("render_queue")

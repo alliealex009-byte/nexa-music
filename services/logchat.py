@@ -55,13 +55,35 @@ def target() -> int:
     return _override or env_target() or config.OWNER_ID
 
 
+async def _send(text: str):
+    """Straight to the Bot API so a failure is visible (ui.send hides errors and just returns None)."""
+    from services import botapi
+
+    await botapi.call("sendMessage", chat_id=target(), text=text, parse_mode="HTML",
+                      link_preview_options={"is_disabled": True})
+
+
+def explain(err: str) -> str:
+    low = err.lower()
+    if "chat not found" in low:
+        return "chat not found — wrong ID, or this bot was never added to that channel"
+    if "not enough rights" in low or "forbidden" in low or "administrator" in low:
+        return "the bot is not an admin of that channel (or can't post). Add THIS bot as admin with “Post messages”"
+    if "kicked" in low or "not a member" in low:
+        return "the bot was removed from that channel — add it again as admin"
+    return err
+
+
 async def test() -> str | None:
-    """Send a probe to the log chat. None = ok, otherwise the reason it failed."""
+    """Send a probe to the log chat. None = ok, otherwise the real reason it failed."""
     try:
-        await ui.send(target(), "📝 <b>Logger connected.</b> Play events and errors will appear here.")
+        await _send("📝 <b>Logger connected.</b> Play events and errors will appear here.")
         return None
     except Exception as e:
-        return str(e)[:200]
+        return explain(str(e)[:250])
+
+
+_last_warn = 0.0
 
 
 async def where(chat_id: int) -> str:
@@ -78,9 +100,20 @@ async def where(chat_id: int) -> str:
 
 
 async def event(text: str):
+    global _last_warn
     if not _enabled:
         return
     try:
-        await ui.send(target(), text, sticky=True)
-    except Exception:
-        log.exception("log send to %s failed (is the bot an admin there?)", target())
+        await _send(text)
+    except Exception as e:
+        import time
+
+        reason = explain(str(e)[:250])
+        log.warning("log send to %s failed: %s", target(), reason)
+        if time.time() - _last_warn > 3600 and target() != config.OWNER_ID:
+            _last_warn = time.time()
+            try:
+                await ui.send(config.OWNER_ID, f"⚠️ <b>Logger can't write to</b> <code>{target()}</code>\n{reason}\n"
+                                               "Fix it, then run <code>/logger test</code>.")
+            except Exception:
+                pass
