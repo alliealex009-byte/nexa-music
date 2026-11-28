@@ -31,6 +31,10 @@ class Card:
     lines: list = field(default_factory=list)
     lines_loaded: bool = False
     more: bool = False  # showing the "More" button page
+    cover: bytes | None = None
+    fallback: bytes | None = None
+    img_at: float = 0.0  # when the card image was last re-rendered
+    img_fail: int = 0
     status: str | None = None  # e.g. "downloading audio…" while the next track loads
 
 
@@ -72,7 +76,7 @@ def caption(chat_id: int, track: Track, settings: dict, lines: list | None = Non
     pos = player.position(chat_id)
     head = "ᴘᴀᴜsᴇᴅ" if paused else "sᴛʀᴇᴀᴍɪɴɢ ɪɴ ᴠᴄ"
     icon = "⏸" if paused else ui.em("play", "▶️")
-    name = f'<a href="{esc(track.url)}">{esc(track.title)}</a>' if track.url.startswith("http") else esc(track.title)
+    name = song_link(track)
     extra = " • 🎬 Video" if track.video else ""
     dur = fmt_clock(track.duration) if track.duration else "LIVE"
     body = [f"<b>TRACK:</b> {name}{extra}", f"<b>DURATION:</b> {dur}",
@@ -86,6 +90,14 @@ def caption(chat_id: int, track: Track, settings: dict, lines: list | None = Non
     if len(strip_html(text)) > 1000:
         text = text.replace(esc(track.title), esc(track.title[:80]) + "…")
     return text
+
+
+def song_link(track: Track) -> str:
+    """Song title linked to the bot (t.me/<bot>?start=song_<id>) instead of a raw YouTube link."""
+    m = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", track.url or "")
+    if m and ui.bot_username:
+        return f'<a href="https://t.me/{ui.bot_username}?start=song_{m.group(1)}">{esc(track.title)}</a>'
+    return esc(track.title)
 
 
 def status_text(key: str) -> str:
@@ -135,9 +147,10 @@ async def _post_card(chat_id: int, track: Track, settings: dict | None = None) -
     photo = thumbnail_for(track)
     mid, has_photo = None, bool(photo)
     cover = await cardimg.fetch(photo) if photo else None
+    fallback = await cardimg.fetch(config.WELCOME_IMAGE)
     img = await cardimg.render(cardimg.render_player, cover, track.title,
                                f"Requested by {track.requested_name or '—'}", track.duration,
-                               fallback=await cardimg.fetch(config.WELCOME_IMAGE)) if cover or not photo else None
+                               fallback=fallback) if cover or not photo else None
     if img:
         mid = await ui.send(chat_id, text, rows, photo_bytes=img, sticky=True)
         has_photo = True
@@ -152,6 +165,8 @@ async def _post_card(chat_id: int, track: Track, settings: dict | None = None) -
         return None
     log.info("now-playing card sent in %s (photo=%s, image=%s)", chat_id, has_photo, bool(img))
     card = Card(mid, track, has_photo)
+    card.cover, card.fallback, card.img_at = cover, fallback, time.monotonic()
+    card.img_fail = 0 if img else 99  # no rendered image on this card: never try to swap pictures
     cards[chat_id] = card
     card.task = asyncio.get_event_loop().create_task(_live(chat_id, card))
     return mid
@@ -191,6 +206,7 @@ async def refresh(chat_id: int, more: bool | None = None):
         return
     if more is not None:
         card.more = more
+    card.img_at = 0.0  # pause / resume / seek: redraw the picture too
     settings = await groups_db.get_settings(chat_id)
     await _edit(chat_id, card, settings)
 
@@ -210,7 +226,31 @@ async def _edit(chat_id: int, card: Card, settings: dict) -> bool:
         params["caption"] = text
     else:
         params.update(text=text, link_preview_options={"is_disabled": True})
+    use_image = (rows and card.has_photo and card.img_fail < 3 and config.IMAGE_UPDATE_SECONDS > 0
+                 and time.monotonic() - card.img_at >= config.IMAGE_UPDATE_SECONDS)
     try:
+        if use_image:
+            img = await cardimg.render(
+                cardimg.render_player, card.cover, card.track.title,
+                f"Requested by {card.track.requested_name or '—'}", card.track.duration,
+                chat_id in player.manual_paused or chat_id in player.auto_paused,
+                card.fallback, player.position(chat_id))
+            if img:
+                caption_text = text if ui._flags["icons"] else ui.strip_emoji_tags(text)
+                media = {"type": "photo", "media": "attach://card", "caption": caption_text, "parse_mode": "HTML"}
+                try:
+                    await ui._post("editMessageMedia", {"chat_id": chat_id, "message_id": card.message_id, "media": media},
+                                   controls(chat_id, settings, more, card.track), {"card": ("card.jpg", img, "image/jpeg")})
+                    card.img_at, card.img_fail = time.monotonic(), 0
+                    card.last = markup_key
+                    return True
+                except botapi.BotApiError as e:
+                    if "not modified" not in e.description.lower() and "not found" not in e.description.lower():
+                        card.img_fail += 1
+                        card.img_at = time.monotonic()
+                        log.info("card image update failed (%s)", e.description)
+                    else:
+                        raise
         await ui._post(method, params, controls(chat_id, settings, more, card.track) if rows else None)
     except botapi.BotApiError as e:
         desc = e.description.lower()

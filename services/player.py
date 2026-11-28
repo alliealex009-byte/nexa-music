@@ -55,7 +55,8 @@ def setup(bot, assistant, calls):
     _bot, _assistant, _calls = bot, assistant, calls
     _helpers.clear()
     _assign.clear()
-    add_helper(assistant, calls)
+    if assistant is not None:  # helper #1 from .env is optional: accounts can be logged in from the bot's DM instead
+        add_helper(assistant, calls)
 
 
 def add_helper(client, calls, source: str = "env", db_id: int | None = None) -> Helper:
@@ -76,6 +77,10 @@ def remove_helper(helper: Helper):
         _joined.discard(chat)
     for n, h in enumerate(_helpers, 1):
         h.index = n
+
+
+NO_HELPER_TEXT = ("No assistant account is set up yet. The bot owner can add one in a private chat with me: "
+                  "/owner → 🤖 Helpers → 📱 Add by phone number.")
 
 
 def helper_for(chat_id: int) -> Helper:
@@ -265,6 +270,8 @@ async def _choose_helper(chat_id: int) -> Helper:
 
 async def ensure_assistant(chat_id: int) -> str | None:
     """Make sure a helper account is in the group. Returns an error text or None."""
+    if not _helpers:
+        return NO_HELPER_TEXT
     if chat_id in _joined and chat_id in _assign:
         return None
     if chat_id not in _assign:

@@ -1,4 +1,6 @@
 """Help pages (HTML). Each page is opened from the /help hub via a sub-menu button."""
+import re
+
 import config
 
 PAGES = {
@@ -79,3 +81,50 @@ def hub_text() -> str:
         "JioSaavn, Deezer, Tidal, Amazon Music, Gaana, Wynk and plain links.\n\n"
         f"💬 @{config.SUPPORT_GROUP}"
     )
+
+
+# ------------------------------------------------------------------ rich version (tables + collapsible sections)
+def _cell(content: str) -> str:
+    return f'<td align="left" valign="top">{content}</td>'
+
+
+def _split(page: str):
+    """(title, [(command, description)], [notes]) from a classic help page."""
+    lines = [ln.strip() for ln in PAGES[page].split("\n")]
+    title = re.sub(r"<[^>]+>", "", lines[0]).strip()
+    rows, notes = [], []
+    for ln in lines[1:]:
+        if not ln:
+            continue
+        if ln.startswith("/"):
+            cmd, _, desc = ln.partition(" — ")
+            rows.append((cmd.strip(), desc.strip() or "—"))
+        else:
+            notes.append(ln)
+    return title, rows, notes
+
+
+def _table(rows) -> str:
+    head = '<tr><th align="left" valign="top">Command</th><th align="left" valign="top">Description</th></tr>'
+    body = "".join(f"<tr>{_cell(f'<code>{c}</code>')}{_cell(d)}</tr>" for c, d in rows)
+    return f"<table bordered>{head}{body}</table>"
+
+
+def rich_page(page: str) -> str:
+    title, rows, notes = _split(page)
+    out = [f"<h2>{title}</h2>"]
+    if rows:
+        out.append(_table(rows))
+    out += [f"<p>{n}</p>" for n in notes]
+    return "".join(out)
+
+
+def rich_hub() -> str:
+    out = ["<h2>📚 Help &amp; commands</h2>",
+           "<blockquote>Fast, ads-free music for Telegram voice chats. Open a section below or use the buttons.</blockquote>"]
+    for page in ORDER:
+        title, rows, notes = _split(page)
+        inner = (_table(rows) if rows else "") + "".join(f"<p>{n}</p>" for n in notes)
+        out.append(f"<details><summary>{title}</summary>{inner}</details>")
+    out.append("<p><i>Use the buttons below to go inside or back.</i></p>")
+    return "".join(out)

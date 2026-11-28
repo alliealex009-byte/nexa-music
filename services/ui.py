@@ -23,7 +23,7 @@ log = logging.getLogger("ui")
 _bot = None
 bot_username = ""
 _emoji: dict[str, str] = {}
-_flags = {"icons": True, "style": True}
+_flags = {"icons": True, "style": True, "rich": True}
 _tasks: set[asyncio.Task] = set()
 _photo_ids: dict[str, str] = {}  # local banner path -> Telegram file_id (upload once)
 CAPTION_LIMIT = 1024
@@ -284,3 +284,53 @@ async def _schedule_delete(chat_id: int, message_id: int, sticky: bool):
     task = asyncio.get_event_loop().create_task(later())
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
+
+
+# ------------------------------------------------------------------ rich messages (Bot API 10.1+: headings, tables, collapsible sections)
+def _rich_unsupported(e) -> bool:
+    d = e.description.lower()
+    return e.code in (400, 404, 405) and any(k in d for k in ("method", "not found", "unsupported", "rich", "unknown"))
+
+
+async def send_rich(chat_id: int, html_body: str, rows, fallback_text: str, reply_to: int | None = None,
+                    sticky: bool = True) -> int | None:
+    """Send a rich message; on servers/clients that don't know them, send the classic text instead."""
+    if _flags["rich"]:
+        params: dict = {"chat_id": chat_id, "rich_message": {"html": html_body, "skip_entity_detection": True}}
+        if reply_to:
+            params["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+        try:
+            res = await _post("sendRichMessage", params, rows)
+            mid = res["message_id"]
+            await _schedule_delete(chat_id, mid, sticky)
+            return mid
+        except botapi.BotApiError as e:
+            log.warning("rich message failed (%s); using plain text", e)
+            if _rich_unsupported(e):
+                _flags["rich"] = False
+        except Exception as e:
+            log.warning("rich message failed (%s); using plain text", e)
+    return await send(chat_id, fallback_text, rows, reply_to=reply_to, sticky=sticky)
+
+
+async def edit_cb_rich(q, html_body: str, fallback_text: str, rows=None):
+    """Edit a callback's message into a rich message (a photo message is replaced by a new one)."""
+    chat_id, mid = q.message.chat.id, q.message.id
+    if getattr(q.message, "photo", None):
+        await delete(chat_id, mid)
+        await send_rich(chat_id, html_body, rows, fallback_text)
+        return
+    if _flags["rich"]:
+        try:
+            await _post("editMessageText", {"chat_id": chat_id, "message_id": mid,
+                                            "rich_message": {"html": html_body, "skip_entity_detection": True}}, rows or [])
+            return
+        except botapi.BotApiError as e:
+            if "not modified" in e.description.lower():
+                return
+            log.warning("rich edit failed (%s); using plain text", e)
+            if _rich_unsupported(e):
+                _flags["rich"] = False
+        except Exception as e:
+            log.warning("rich edit failed (%s); using plain text", e)
+    await edit_cb(q, fallback_text, rows)

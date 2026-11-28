@@ -153,6 +153,45 @@ async def verify_youtube_cookies(content: str | None = None) -> str:
     return "\n".join([verdict] + notes)
 
 
+async def verify_spotify_cookies(content: str | None = None) -> str:
+    """Spotify cookies: is the sp_dc login cookie there, not expired, and does Spotify still see a logged-in user?"""
+    import time as _t
+
+    import aiohttp
+
+    content = content or await cred.get_cookies("spotify")
+    if not content:
+        return "🍪 No Spotify cookies saved yet."
+    sp_dc = None
+    for line in content.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 7 and parts[5] == "sp_dc":
+            sp_dc = (parts[6].strip(), int(parts[4]) if parts[4].isdigit() else 0)
+    if not sp_dc or not sp_dc[0]:
+        return ("❌ <b>No <code>sp_dc</code> login cookie</b> in this file — it was exported while logged out. "
+                "Log in at open.spotify.com, export cookies again, upload.")
+    if sp_dc[1] and sp_dc[1] < _t.time():
+        return "❌ <b>The sp_dc cookie has expired.</b> Log in again and export fresh cookies."
+    left = f" (valid for another {int((sp_dc[1] - _t.time()) / 86400)} days)" if sp_dc[1] else ""
+    header = cookie_manager.header_for(content)
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    try:
+        timeout = aiohttp.ClientTimeout(total=12)
+        async with aiohttp.ClientSession(timeout=timeout) as sess:
+            async with sess.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player",
+                                headers={"Cookie": header, "User-Agent": ua}) as r:
+                status = r.status
+                data = await r.json(content_type=None) if status == 200 else {}
+    except Exception:
+        return f"⚠️ <b>sp_dc cookie present{left}</b>, but Spotify could not be reached to confirm it."
+    if status == 200 and data.get("isAnonymous") is False:
+        return f"✅ <b>Spotify cookies work</b> — logged in{left}."
+    if status == 200 and data.get("isAnonymous") is True:
+        return "❌ <b>Spotify sees you as logged out</b> — the cookie is invalid or was revoked. Export fresh cookies."
+    return (f"⚠️ <b>sp_dc cookie present{left}</b>, but Spotify's check endpoint answered {status}, so I can't confirm "
+            "it online. The cookie is only used to read Spotify link pages (playlists/albums); if links resolve, it works.")
+
+
 async def save_cookies(service: str, raw: str) -> str:
     """Normalise + store. Raises cookie_manager.CookieError with a user-safe message."""
     content = cookie_manager.normalize(raw, service)
@@ -165,6 +204,8 @@ async def save_cookies(service: str, raw: str) -> str:
     out = f"✅ Saved <b>{esc(service)}</b> cookies: {count} cookies ({esc(', '.join(domains[:4]))}).{note}"
     if service == "youtube":
         out += "\n\n🔍 Testing them now…\n" + await verify_youtube_cookies(content)
+    elif service == "spotify":
+        out += "\n\n🔍 Testing them now…\n" + await verify_spotify_cookies(content)
     return out
 
 

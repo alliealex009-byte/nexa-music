@@ -124,7 +124,7 @@ def _canvas(cover_bytes: bytes | None, fallback_bytes: bytes | None = None):
 
 
 def render_player(cover: bytes | None, title: str, subtitle: str, duration: int, paused: bool = False,
-                  fallback: bytes | None = None) -> bytes | None:
+                  fallback: bytes | None = None, position: int = 0) -> bytes | None:
     """The 'Streaming in VC' card: blurred backdrop, big cover, title, who asked, and a progress bar."""
     if Image is None:
         return None
@@ -139,10 +139,13 @@ def render_player(cover: bytes | None, title: str, subtitle: str, duration: int,
         s, sf = _fit_text(d, subtitle, _font, W - x - 70, 34, bold=False, min_size=24)
         d.text((x, 280), s, font=sf, fill=(200, 200, 210))
         by = 470
-        d.rounded_rectangle((x, by, W - 70, by + 10), 5, fill=(255, 255, 255, 60))
-        d.rounded_rectangle((x, by, x + 28, by + 10), 5, fill=ACCENT)
-        d.ellipse((x + 12, by - 9, x + 30, by + 19), fill="white")
-        d.text((x, by + 30), "0:00", font=_font(28), fill=(220, 220, 230))
+        bar_w = W - 70 - x
+        frac = min(1.0, max(0.0, position / duration)) if duration else 0.0
+        fill = max(14, int(bar_w * frac))
+        d.rounded_rectangle((x, by, W - 70, by + 10), 5, fill=(110, 110, 125))
+        d.rounded_rectangle((x, by, x + fill, by + 10), 5, fill=ACCENT)
+        d.ellipse((x + fill - 9, by - 9, x + fill + 9, by + 19), fill="white")
+        d.text((x, by + 30), _clock(position), font=_font(28), fill=(220, 220, 230))
         end = _clock(duration) if duration else "LIVE"
         d.text((W - 70 - d.textlength(end, font=_font(28)), by + 30), end, font=_font(28), fill=(220, 220, 230))
         d.text((x, 600), "RIA MUSIC", font=_font(26, True), fill=(255, 255, 255, 120))
