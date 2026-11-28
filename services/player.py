@@ -483,7 +483,7 @@ async def _play_next(chat_id: int, skipped: bool, announce: bool) -> Track | Non
         nxt = queue_manager.next_track(chat_id)
         if nxt is None:
             settings = await groups_db.get_settings(chat_id)
-            if settings["autoplay"] and last and not last.video and not tried_autoplay:  # autoplay is audio-only
+            if settings["autoplay"] and last and not tried_autoplay:
                 tried_autoplay = True
                 from services import autoplay
 
