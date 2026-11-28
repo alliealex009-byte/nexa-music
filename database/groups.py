@@ -16,6 +16,7 @@ DEFAULTS = {
     "autoplay": False,
     "lyrics": False,  # show the Lyrics button and allow /lyrics in this group
     "karaoke": False,  # live lyric line on the now-playing card
+    "welcome": False,  # welcome card for new members
 }
 BOOL_KEYS = {k for k, v in DEFAULTS.items() if isinstance(v, bool)}
 CHOICES = {

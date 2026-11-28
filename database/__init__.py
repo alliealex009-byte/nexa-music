@@ -87,6 +87,7 @@ GROUP_COLUMNS = {
     "idle_stop": "INTEGER DEFAULT 1",
     "lyrics": "INTEGER DEFAULT 0",
     "karaoke": "INTEGER DEFAULT 0",
+    "welcome": "INTEGER DEFAULT 0",
 }
 
 
