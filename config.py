@@ -32,9 +32,15 @@ SESSION_STRING = os.getenv("SESSION_STRING", "")  # helper #1: assistant userbot
 # more helpers: space/comma separated session strings here, or add them from the owner panel (up to MAX_HELPERS)
 SESSION_STRINGS = [x for x in re.split(r"[\s,]+", os.getenv("SESSION_STRINGS", "")) if x]
 MAX_HELPERS = _int("MAX_HELPERS", 10)
+# Telegram proxies for helper accounts: one dedicated proxy per account, never changed (a changing IP gets accounts frozen).
+# HELPER_PROXIES lines up with SESSION_STRING, then SESSION_STRINGS (space/comma separated, "-" = none for that one).
+HELPER_PROXIES = [x for x in re.split(r"[\s,]+", os.getenv("HELPER_PROXIES", "")) if x]
+HELPER_REQUIRE_PROXY = _bool("HELPER_REQUIRE_PROXY", True)  # panel-added helpers need a free proxy
+YTDLP_USE_PROXY = _bool("YTDLP_USE_PROXY", False)  # proxies are for helper accounts only unless you turn this on
+HELPER_START_GAP = _int("HELPER_START_GAP", 8)  # seconds between helper log-ins at startup
 HELPER_BIO = _str("HELPER_BIO") or "Always ads-free music 🎵"  # Telegram allows 70 characters
 HELPER_DP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "dp.jpg")
-HELPER_BRANDING = _bool("HELPER_BRANDING", True)  # name helpers "<BOT_NAME> 1, 2, ..." and set bio + photo
+HELPER_BRANDING = _bool("HELPER_BRANDING", False)  # name helpers "<BOT_NAME> 1, 2, ..." and set bio + photo
 
 # --- MongoDB (free Atlas M0 is fine): snapshots of the bot's data so it survives a VPS rebuild
 MONGO_URL = _str("MONGO_URL")

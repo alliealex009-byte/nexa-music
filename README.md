@@ -52,3 +52,10 @@ Test from the bot container: `docker compose exec nexa-music python -c "import u
 - Direct YouTube stream URLs are checked first; an unreadable URL (silent call) is downloaded instead. The next track is pre-resolved while the current one plays, so Skip is fast.
 - New cards: rendered player image, `ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴀᴜᴅɪᴏ ...` / `sᴛᴀʀᴛɪɴɢ sᴛʀᴇᴀᴍ ...` status, progress-time button, queued card (Play Now / Skip / Close), ping card, optional welcome card (Settings → Welcome card).
 - Owner command `/debug` lists the last playback errors.
+
+## v7 – helper account safety
+- Each helper account connects through its **own** proxy (panel: 🧦 Proxies → add, then 🤖 Helpers → add). The proxy is saved with the account and never changes. Proxies are no longer used for yt-dlp unless `YTDLP_USE_PROXY=true`.
+- Add helpers from the bot DM: 📱 phone number (code + 2FA) or session string.
+- No more automatic profile changes: nothing is renamed/deleted at startup or when a helper is added; old photos are never deleted. The "Set names/bio/photo" button does it slowly, one account at a time.
+- Helpers log in one at a time with a pause between them.
+- Search: API 8 s → yt-dlp 20 s → JioSaavn, so it can no longer hang.

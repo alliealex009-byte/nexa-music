@@ -25,8 +25,15 @@ bot = Client(
     workdir=config.DATA_DIR,
 )
 
+from services.helpers import tg_proxy_dict  # noqa: E402
+
+from services import proxy_manager  # noqa: E402
+
+_main_proxy = (proxy_manager.normalize(config.HELPER_PROXIES[0])
+               if config.HELPER_PROXIES and config.HELPER_PROXIES[0] != "-" else None)
 assistant = Client(
     "nexa_assistant",
+    proxy=tg_proxy_dict(_main_proxy),
     api_id=config.API_ID,
     api_hash=config.API_HASH,
     session_string=config.SESSION_STRING,
@@ -72,6 +79,7 @@ async def main():
     me = await bot.get_me()
     ui.setup(bot, me.username or "")
     player.setup(bot, assistant, calls)
+    player.helpers()[0].proxy = _main_proxy
     await player.assistant_info()
     problems = await helpers.start_extra()
     branding = await helpers.brand_all()
